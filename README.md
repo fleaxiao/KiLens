@@ -1,5 +1,9 @@
 # KiLens
 
+<p align="center">
+  <img src="icon.png" alt="KiLens icon" width="128" />
+</p>
+
 KiLens is a Visual Studio Code extension for previewing KiCad schematic and PCB files inside the editor.
 
 ## Features
@@ -24,14 +28,6 @@ KiLens is a Visual Studio Code extension for previewing KiCad schematic and PCB 
 - KiCanvas is an interactive browser-based viewer for KiCad schematics and boards. It is developed separately from KiLens; see the [KiCanvas repository](https://github.com/theacodes/kicanvas) for upstream documentation and issue reporting.
 - KiCad is a separate open-source EDA project and is not bundled with this extension.
 
-## Credits
-
-KiLens is based on KiCode by Sajad Ghorbani.
-
-This extension includes KiCanvas by Alethea Katherine Flowers and the KiCanvas contributors.
-
-Modifications for KiLens are copyright (c) 2026 fleaxiao.
-
 ## License
 
-KiLens is licensed under the MIT License. See [LICENSE.txt](LICENSE.txt) and [NOTICE](NOTICE) for copyright, attribution, and third-party notices.
+KiLens is licensed under the MIT License.

@@ -70,7 +70,7 @@ class PreViewProvider {
 						line-height: 0;
 						padding: 0;
 						position: fixed;
-						right: 82px;
+						right: 84px;
 						top: 8px;
 						width: 34px;
 						z-index: 10;
