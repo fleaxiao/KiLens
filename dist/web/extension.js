@@ -42,7 +42,7 @@ class PreViewProvider {
         });
     }
     getWebviewContent(document, webviewPanel, cacheBust) {
-        const scriptUri = webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'kicanvas.js')).with({ query: 'v=kicanvas-kicad-theme' });
+        const scriptUri = webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'kicanvas.js')).with({ query: 'v=kicanvas-zoom-edge-cuts-icon' });
         const fileUri = webviewPanel.webview.asWebviewUri(document.uri).with({ query: `v=${cacheBust}` });
         return `<!DOCTYPE html>
 			<html>

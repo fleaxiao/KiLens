@@ -1,15 +1,15 @@
-# KiLens
-
 <p align="center">
   <img src="icon.png" alt="KiLens icon" width="128" />
 </p>
+
+# KiLens
 
 KiLens is a Visual Studio Code extension for previewing KiCad schematic and PCB files inside the editor.
 
 ## Features
 
 - Opens `.kicad_sch` and `.kicad_pcb` files in a custom VS Code editor.
-- Renders the preview with the bundled [KiCanvas](https://kicanvas.org/) web component.
+- Renders the preview with the latest [KiCanvas](https://kicanvas.org/) web component.
 - Supports KiCanvas basic controls, including zooming, panning, and design inspection.
 - Refreshes the preview when the underlying document changes.
 - Provides a **Refresh Preview** command and editor title button for manual reloads.
@@ -17,10 +17,13 @@ KiLens is a Visual Studio Code extension for previewing KiCad schematic and PCB 
 
 ## Usage
 
-1. Open a KiCad `.kicad_sch` or `.kicad_pcb` file in VS Code.
-2. KiLens opens the file with the **KiCAD Viewer** custom editor.
-3. Use the KiCanvas controls to inspect the schematic or board.
-4. Run **Refresh Preview** from the command palette, or click the refresh button in the editor title, if you need to reload the preview manually.
+1. Open any `.kicad_sch` or `.kicad_pcb` file from the Explorer. KiLens opens the file with the **KiCAD Viewer** custom editor.
+2. Use the built-in KiCanvas controls to inspect the design:
+
+   - Scroll or pinch to zoom.
+   - Drag to pan around the schematic or board.
+   - Use the KiCanvas toolbar and inspector controls shown inside the preview.
+3. Refresh the preview when needed.
 
 ## Notes
 
