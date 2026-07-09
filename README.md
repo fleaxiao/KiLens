@@ -15,6 +15,32 @@ KiLens is a Visual Studio Code extension for previewing KiCad schematic and PCB 
 - Provides a **Refresh Preview** command and editor title button for manual reloads.
 - Keeps the preview webview alive while it is hidden, so switching editor tabs is smoother.
 
+## Installation
+
+1. Clone the repository:
+
+```sh
+   git clone https://github.com/fleaxiao/KiLens.git
+   cd KiLens
+```
+
+2. Install dependencies:
+
+   ```sh
+   npm install
+   ```
+3. Build and package the extension:
+
+   ```sh
+   npm run package-web
+   npm run package
+   ```
+4. Install the generated `.vsix` package:
+
+   ```sh
+   code --install-extension kilens-0.0.1.vsix
+   ```
+
 ## Usage
 
 1. Open any `.kicad_sch` or `.kicad_pcb` file from the Explorer. KiLens opens the file with the **KiCAD Viewer** custom editor.
