@@ -1,8 +1,107 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.activate = activate;
-exports.deactivate = deactivate;
-const vscode = require("vscode");
+/******/ (() => { // webpackBootstrap
+/******/ 	"use strict";
+/******/ 	var __webpack_modules__ = ([
+/* 0 */,
+/* 1 */
+/***/ ((module) => {
+
+module.exports = require("vscode");
+
+/***/ })
+/******/ 	]);
+/************************************************************************/
+/******/ 	// The module cache
+/******/ 	const __webpack_module_cache__ = {};
+/******/ 	
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/ 		// Check if module is in cache
+/******/ 		const cachedModule = __webpack_module_cache__[moduleId];
+/******/ 		if (cachedModule !== undefined) {
+/******/ 			return cachedModule.exports;
+/******/ 		}
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		const module = __webpack_module_cache__[moduleId] = {
+/******/ 			// no module.id needed
+/******/ 			// no module.loaded needed
+/******/ 			exports: {}
+/******/ 		};
+/******/ 	
+/******/ 		// Execute the module function
+/******/ 		__webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+/******/ 	
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/ 	
+/************************************************************************/
+/******/ 	/* webpack/runtime/compat get default export */
+/******/ 	(() => {
+/******/ 		// getDefaultExport function for compatibility with non-harmony modules
+/******/ 		__webpack_require__.n = (module) => {
+/******/ 			const getter = module && module.__esModule ?
+/******/ 				() => (module['default']) :
+/******/ 				() => (module);
+/******/ 			__webpack_require__.d(getter, { a: getter });
+/******/ 			return getter;
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/define property getters */
+/******/ 	(() => {
+/******/ 		// define getter/value functions for harmony exports
+/******/ 		__webpack_require__.d = (exports, definition) => {
+/******/ 			if(Array.isArray(definition)) {
+/******/ 				var i = 0;
+/******/ 				while(i < definition.length) {
+/******/ 					var key = definition[i++];
+/******/ 					var binding = definition[i++];
+/******/ 					if(!__webpack_require__.o(exports, key)) {
+/******/ 						if(binding === 0) {
+/******/ 							Object.defineProperty(exports, key, { enumerable: true, value: definition[i++] });
+/******/ 						} else {
+/******/ 							Object.defineProperty(exports, key, { enumerable: true, get: binding });
+/******/ 						}
+/******/ 					} else if(binding === 0) { i++; }
+/******/ 				}
+/******/ 			} else {
+/******/ 				for(var key in definition) {
+/******/ 					if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+/******/ 						Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 					}
+/******/ 				}
+/******/ 			}
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	(() => {
+/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/make namespace object */
+/******/ 	(() => {
+/******/ 		// define __esModule on exports
+/******/ 		__webpack_require__.r = (exports) => {
+/******/ 			if(Symbol.toStringTag) {
+/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 			}
+/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/************************************************************************/
+let __webpack_exports__ = {};
+// This entry needs to be wrapped in an IIFE because it needs to be isolated against other modules in the chunk.
+(() => {
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   activate: () => (/* binding */ activate),
+/* harmony export */   deactivate: () => (/* binding */ deactivate)
+/* harmony export */ });
+/* harmony import */ var vscode__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(1);
+/* harmony import */ var vscode__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(vscode__WEBPACK_IMPORTED_MODULE_0__);
+
 class PreViewProvider {
     constructor(context) {
         this.context = context;
@@ -17,7 +116,7 @@ class PreViewProvider {
             enableCommandUris: true,
             localResourceRoots: [
                 this.context.extensionUri,
-                vscode.Uri.joinPath(vscode.Uri.file(document.uri.fsPath), '..')
+                vscode__WEBPACK_IMPORTED_MODULE_0__.Uri.joinPath(vscode__WEBPACK_IMPORTED_MODULE_0__.Uri.file(document.uri.fsPath), '..')
             ]
         };
         const updateWebview = () => {
@@ -25,7 +124,7 @@ class PreViewProvider {
         };
         this.refreshCallbacks.add(updateWebview);
         updateWebview();
-        const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
+        const changeDocumentSubscription = vscode__WEBPACK_IMPORTED_MODULE_0__.workspace.onDidChangeTextDocument(e => {
             if (e.document.uri.toString() === document.uri.toString()) {
                 updateWebview();
             }
@@ -42,7 +141,7 @@ class PreViewProvider {
         });
     }
     getWebviewContent(document, webviewPanel, cacheBust) {
-        const scriptUri = webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'kicanvas.js')).with({ query: 'v=kicanvas-zoom-edge-cuts-icon' });
+        const scriptUri = webviewPanel.webview.asWebviewUri(vscode__WEBPACK_IMPORTED_MODULE_0__.Uri.joinPath(this.context.extensionUri, 'media', 'kicanvas.js')).with({ query: 'v=kicanvas-zoom-edge-cuts-icon' });
         const fileUri = webviewPanel.webview.asWebviewUri(document.uri).with({ query: `v=${cacheBust}` });
         return `<!DOCTYPE html>
 			<html>
@@ -112,6 +211,13 @@ class PreViewProvider {
 }
 function activate(context) {
     const provider = new PreViewProvider(context);
-    context.subscriptions.push(vscode.window.registerCustomEditorProvider('kilens.preview', provider, { webviewOptions: { retainContextWhenHidden: true } }), vscode.commands.registerCommand('kilens.refresh', () => provider.refresh()));
+    context.subscriptions.push(vscode__WEBPACK_IMPORTED_MODULE_0__.window.registerCustomEditorProvider('kilens.preview', provider, { webviewOptions: { retainContextWhenHidden: true } }), vscode__WEBPACK_IMPORTED_MODULE_0__.commands.registerCommand('kilens.refresh', () => provider.refresh()));
 }
 function deactivate() { }
+
+})();
+
+module.exports = __webpack_exports__;
+/******/ })()
+;
+//# sourceMappingURL=extension.js.map

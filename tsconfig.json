@@ -1,0 +1,25 @@
+{
+	"compilerOptions": {
+		"module": "ESNext",
+		"target": "ES2020",
+		"lib": [
+			"ES2020",
+			"DOM"
+		],
+		"sourceMap": true,
+		"rootDir": "src",
+		"strict": true,
+		"moduleResolution": "node",
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"types": [
+			"mocha",
+			"node",
+			"vscode",
+			"webpack-env"
+		]
+	},
+	"include": [
+		"src"
+	]
+}
