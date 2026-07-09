@@ -1,19 +1,35 @@
 {
 	"name": "kilens",
 	"displayName": "KiLens",
-	"description": "KiCAD Viewer for Visual Studio Code",
+	"description": "KiCad schematic and PCB files Preview",
 	"version": "0.0.1",
 	"publisher": "fleaxiao",
-	"private": true,
 	"license": "MIT",
 	"icon": "icon.png",
 	"repository": "https://github.com/fleaxiao/KiLens",
+	"homepage": "https://github.com/fleaxiao/KiLens#readme",
+	"bugs": {
+		"url": "https://github.com/fleaxiao/KiLens/issues"
+	},
 	"engines": {
 		"vscode": "^1.74.0"
 	},
 	"categories": [
 		"Other"
 	],
+	"keywords": [
+		"kicad",
+		"pcb",
+		"schematic",
+		"viewer",
+		"electronics"
+	],
+	"capabilities": {
+		"untrustedWorkspaces": {
+			"supported": true
+		},
+		"virtualWorkspaces": true
+	},
 	"activationEvents": [
 		"onCustomEditor:kilens.preview",
 		"onCommand:kilens.refresh"
@@ -57,25 +73,30 @@
 		"vscode:prepublish": "npm run package-web",
 		"compile-web": "webpack",
 		"watch-web": "webpack --watch",
-		"package-web": "webpack --mode production --devtool hidden-source-map",
-		"lint": "eslint"
+		"package-web": "webpack --env extensionOnly --mode production --devtool hidden-source-map",
+		"lint": "eslint",
+		"package": "vsce package",
+		"publish": "vsce publish"
 	},
 	"files": [
-		"dist",
+		"dist/web/extension.js",
 		"media",
-		"icon.png"
+		"icon.png",
+		"LICENSE",
+		"NOTICE"
 	],
 	"devDependencies": {
 		"@eslint/js": "^9.13.0",
 		"@stylistic/eslint-plugin": "^2.9.0",
-		"@types/mocha": "^9.0.0",
+		"@types/mocha": "^10.0.10",
 		"@types/node": "^26.1.1",
 		"@types/vscode": "^1.73.0",
 		"@types/webpack-env": "^1.16.2",
-		"@vscode/test-web": "^0.0.22",
+		"@vscode/test-web": "^0.0.81",
+		"@vscode/vsce": "^3.9.2",
 		"assert": "^2.0.0",
 		"eslint": "^9.13.0",
-		"mocha": "^9.2.0",
+		"mocha": "^11.7.6",
 		"path-browserify": "^1.0.1",
 		"process": "^0.11.10",
 		"ts-loader": "^9.2.5",
@@ -84,9 +105,8 @@
 		"webpack": "^5.52.1",
 		"webpack-cli": "^4.8.0"
 	},
-	"__metadata": {
-		"installedTimestamp": 1781781356749,
-		"targetPlatform": "undefined",
-		"size": 2751536
+	"overrides": {
+		"diff": "^9.0.0",
+		"serialize-javascript": "^7.0.7"
 	}
 }

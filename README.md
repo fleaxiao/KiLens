@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icon.png" alt="KiLens icon" width="128" />
+  <img src="https://raw.githubusercontent.com/fleaxiao/KiLens/main/icon.png" alt="KiLens icon" width="128" />
 </p>
 
 # KiLens

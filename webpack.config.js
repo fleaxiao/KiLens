@@ -64,4 +64,4 @@ const webTestConfig = {
 	}
 };
 
-module.exports = [webExtensionConfig, webTestConfig];
+module.exports = env => env?.extensionOnly ? webExtensionConfig : [webExtensionConfig, webTestConfig];
