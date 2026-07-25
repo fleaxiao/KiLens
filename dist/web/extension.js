@@ -1,1 +1,455 @@
-(()=>{"use strict";const t={d:(e,n)=>{if(Array.isArray(n))for(var o=0;o<n.length;){var r=n[o++],i=n[o++];t.o(e,r)?0===i&&o++:0===i?Object.defineProperty(e,r,{enumerable:!0,value:n[o++]}):Object.defineProperty(e,r,{enumerable:!0,get:i})}else for(var r in n)t.o(n,r)&&!t.o(e,r)&&Object.defineProperty(e,r,{enumerable:!0,get:n[r]})},o:(t,e)=>Object.prototype.hasOwnProperty.call(t,e),r:t=>{Symbol.toStringTag&&Object.defineProperty(t,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(t,"__esModule",{value:!0})}};let e={};t.r(e),t.d(e,{activate:()=>r,deactivate:()=>i});const n=require("vscode");class o{constructor(t){this.context=t,this.refreshCallbacks=new Set}refresh(){this.refreshCallbacks.forEach(t=>t())}async resolveCustomTextEditor(t,e,o){e.webview.options={enableScripts:!0,enableCommandUris:!0,localResourceRoots:[this.context.extensionUri,n.Uri.joinPath(n.Uri.file(t.uri.fsPath),"..")]};const r=()=>{e.webview.html=this.getWebviewContent(t,e,Date.now())};this.refreshCallbacks.add(r),r();const i=n.workspace.onDidChangeTextDocument(e=>{e.document.uri.toString()===t.uri.toString()&&r()}),s=e.webview.onDidReceiveMessage(t=>{"refresh"===t?.type&&r()});e.onDidDispose(()=>{i.dispose(),s.dispose(),this.refreshCallbacks.delete(r)})}getWebviewContent(t,e,o){return`<!DOCTYPE html>\n\t\t\t<html>\n\t\t\t<head>\n\t\t\t\t<style>\n\t\t\t\t\thtml,\n\t\t\t\t\tbody {\n\t\t\t\t\t\theight: 100%;\n\t\t\t\t\t\tmargin: 0;\n\t\t\t\t\t\tpadding: 0;\n\t\t\t\t\t}\n\n\t\t\t\t\t.refresh-button {\n\t\t\t\t\t\talign-items: center;\n\t\t\t\t\t\tappearance: none;\n\t\t\t\t\t\tbackground: #6b5194;\n\t\t\t\t\t\tborder: 0;\n\t\t\t\t\t\tborder-radius: 4px;\n\t\t\t\t\t\tbox-sizing: border-box;\n\t\t\t\t\t\tcolor: #ffffff;\n\t\t\t\t\t\tcursor: pointer;\n\t\t\t\t\t\tdisplay: flex;\n\t\t\t\t\t\theight: 34px;\n\t\t\t\t\t\tjustify-content: center;\n\t\t\t\t\t\tline-height: 0;\n\t\t\t\t\t\tpadding: 0;\n\t\t\t\t\t\tposition: fixed;\n\t\t\t\t\t\tright: 84px;\n\t\t\t\t\t\ttop: 8px;\n\t\t\t\t\t\twidth: 34px;\n\t\t\t\t\t\tz-index: 10;\n\t\t\t\t\t}\n\n\t\t\t\t\t.refresh-button:hover {\n\t\t\t\t\t\tbackground: #765da2;\n\t\t\t\t\t}\n\n\t\t\t\t\t.refresh-button:focus-visible {\n\t\t\t\t\t\toutline: 2px solid #ffffff;\n\t\t\t\t\t\toutline-offset: 2px;\n\t\t\t\t\t}\n\n\t\t\t\t\t.refresh-button svg {\n\t\t\t\t\t\theight: 16px;\n\t\t\t\t\t\twidth: 16px;\n\t\t\t\t\t}\n\t\t\t\t</style>\n\t\t\t</head>\n\t\t\t<body>\n\t\t\t\t<button class="refresh-button" type="button" title="Refresh Preview" aria-label="Refresh Preview">\n\t\t\t\t\t<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">\n\t\t\t\t\t\t<path d="M20 11a8 8 0 1 0-2.34 5.66"></path>\n\t\t\t\t\t\t<path d="M20 4v7h-7"></path>\n\t\t\t\t\t</svg>\n\t\t\t\t</button>\n\t\t\t\t<script type="module" src="${e.webview.asWebviewUri(n.Uri.joinPath(this.context.extensionUri,"media","kicanvas.js")).with({query:"v=kicanvas-zoom-edge-cuts-icon"})}"><\/script>\n\t\t\t\t<kicanvas-embed src="${e.webview.asWebviewUri(t.uri).with({query:`v=${o}`})}" theme="kicad" controls="basic" controlslist="nooverlay"></kicanvas-embed>\n\t\t\t\t<script>\n\t\t\t\t\tconst vscode = acquireVsCodeApi();\n\t\t\t\t\tconst embed = document.querySelector('kicanvas-embed');\n\t\t\t\t\tconst zoomButtonSelector = 'kc-ui-button[name^="zoom_to_"]';\n\t\t\t\t\tlet currentZoomMode = 'zoom_to_page';\n\n\t\t\t\t\tdocument.querySelector('.refresh-button')?.addEventListener('click', () => {\n\t\t\t\t\t\tvscode.postMessage({ type: 'refresh' });\n\t\t\t\t\t});\n\n\t\t\t\t\tfunction delay(ms) {\n\t\t\t\t\t\treturn new Promise(resolve => window.setTimeout(resolve, ms));\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction getViewerApp() {\n\t\t\t\t\t\treturn embed?.shadowRoot?.querySelector('kc-board-app, kc-schematic-app') ?? null;\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction getViewer() {\n\t\t\t\t\t\treturn getViewerApp()?.viewer ?? null;\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction getZoomButtons() {\n\t\t\t\t\t\tconst toolbar = getViewerApp()?.shadowRoot?.querySelector('kc-viewer-bottom-toolbar');\n\t\t\t\t\t\treturn Array.from(toolbar?.shadowRoot?.querySelectorAll(zoomButtonSelector) ?? []);\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction isButtonEnabled(button) {\n\t\t\t\t\t\treturn !button.disabled && !button.hasAttribute('disabled');\n\t\t\t\t\t}\n\n\t\t\t\t\tasync function waitForZoomControls() {\n\t\t\t\t\t\tconst startedAt = Date.now();\n\n\t\t\t\t\t\twhile (Date.now() - startedAt < 10000) {\n\t\t\t\t\t\t\tconst buttons = getZoomButtons();\n\t\t\t\t\t\t\tif (buttons.length > 0) {\n\t\t\t\t\t\t\t\treturn buttons;\n\t\t\t\t\t\t\t}\n\n\t\t\t\t\t\t\tawait delay(50);\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\treturn [];\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction zoomWithViewer(modeName) {\n\t\t\t\t\t\tconst viewer = getViewer();\n\t\t\t\t\t\tif (!viewer) {\n\t\t\t\t\t\t\treturn false;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tswitch (modeName) {\n\t\t\t\t\t\t\tcase 'zoom_to_page':\n\t\t\t\t\t\t\t\tviewer.zoom_to_page?.();\n\t\t\t\t\t\t\t\treturn true;\n\t\t\t\t\t\t\tcase 'zoom_to_selection':\n\t\t\t\t\t\t\t\tviewer.zoom_to_selection?.();\n\t\t\t\t\t\t\t\treturn true;\n\t\t\t\t\t\t\tcase 'zoom_to_edge_cuts':\n\t\t\t\t\t\t\t\tviewer.zoom_to_board?.();\n\t\t\t\t\t\t\t\treturn true;\n\t\t\t\t\t\t\tdefault:\n\t\t\t\t\t\t\t\treturn false;\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\n\t\t\t\t\tasync function applyZoomMode(modeName) {\n\t\t\t\t\t\tconst buttons = await waitForZoomControls();\n\t\t\t\t\t\tconst button = buttons.find(item => item.name === modeName);\n\n\t\t\t\t\t\tif (button && isButtonEnabled(button)) {\n\t\t\t\t\t\t\tbutton.click();\n\t\t\t\t\t\t\tcurrentZoomMode = modeName;\n\t\t\t\t\t\t\treturn;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tif (zoomWithViewer(modeName)) {\n\t\t\t\t\t\t\tcurrentZoomMode = modeName;\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\n\t\t\t\t\tasync function cycleZoomMode() {\n\t\t\t\t\t\tconst buttons = (await waitForZoomControls()).filter(isButtonEnabled);\n\t\t\t\t\t\tconst modes = buttons.map(button => button.name);\n\n\t\t\t\t\t\tif (modes.length === 0) {\n\t\t\t\t\t\t\tawait applyZoomMode('zoom_to_page');\n\t\t\t\t\t\t\treturn;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tconst currentIndex = modes.indexOf(currentZoomMode);\n\t\t\t\t\t\tconst nextMode = modes[(currentIndex + 1) % modes.length];\n\t\t\t\t\t\tawait applyZoomMode(nextMode);\n\t\t\t\t\t}\n\n\t\t\t\t\tdocument.addEventListener('keydown', event => {\n\t\t\t\t\t\tif (event.code !== 'Space' || event.ctrlKey || event.altKey || event.metaKey) {\n\t\t\t\t\t\t\treturn;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tconst target = event.target;\n\t\t\t\t\t\tif (target instanceof HTMLElement && target.closest('input, textarea, select, button')) {\n\t\t\t\t\t\t\treturn;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tevent.preventDefault();\n\t\t\t\t\t\tvoid cycleZoomMode();\n\t\t\t\t\t});\n\n\t\t\t\t\tvoid applyZoomMode('zoom_to_page');\n\t\t\t\t<\/script>\n\t\t\t</body>\n\t\t\t</html>`}}function r(t){const e=new o(t);t.subscriptions.push(n.window.registerCustomEditorProvider("kilens.preview",e,{webviewOptions:{retainContextWhenHidden:!0}}),n.commands.registerCommand("kilens.refresh",()=>e.refresh()))}function i(){}module.exports=e})();
+/******/ (() => { // webpackBootstrap
+/******/ 	"use strict";
+/******/ 	var __webpack_modules__ = ([
+/* 0 */,
+/* 1 */
+/***/ ((module) => {
+
+module.exports = require("vscode");
+
+/***/ })
+/******/ 	]);
+/************************************************************************/
+/******/ 	// The module cache
+/******/ 	const __webpack_module_cache__ = {};
+/******/ 	
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/ 		// Check if module is in cache
+/******/ 		const cachedModule = __webpack_module_cache__[moduleId];
+/******/ 		if (cachedModule !== undefined) {
+/******/ 			return cachedModule.exports;
+/******/ 		}
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		const module = __webpack_module_cache__[moduleId] = {
+/******/ 			// no module.id needed
+/******/ 			// no module.loaded needed
+/******/ 			exports: {}
+/******/ 		};
+/******/ 	
+/******/ 		// Execute the module function
+/******/ 		__webpack_modules__[moduleId](module, module.exports, __webpack_require__);
+/******/ 	
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/ 	
+/************************************************************************/
+/******/ 	/* webpack/runtime/compat get default export */
+/******/ 	(() => {
+/******/ 		// getDefaultExport function for compatibility with non-harmony modules
+/******/ 		__webpack_require__.n = (module) => {
+/******/ 			const getter = module && module.__esModule ?
+/******/ 				() => (module['default']) :
+/******/ 				() => (module);
+/******/ 			__webpack_require__.d(getter, { a: getter });
+/******/ 			return getter;
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/define property getters */
+/******/ 	(() => {
+/******/ 		// define getter/value functions for harmony exports
+/******/ 		__webpack_require__.d = (exports, definition) => {
+/******/ 			if(Array.isArray(definition)) {
+/******/ 				var i = 0;
+/******/ 				while(i < definition.length) {
+/******/ 					var key = definition[i++];
+/******/ 					var binding = definition[i++];
+/******/ 					if(!__webpack_require__.o(exports, key)) {
+/******/ 						if(binding === 0) {
+/******/ 							Object.defineProperty(exports, key, { enumerable: true, value: definition[i++] });
+/******/ 						} else {
+/******/ 							Object.defineProperty(exports, key, { enumerable: true, get: binding });
+/******/ 						}
+/******/ 					} else if(binding === 0) { i++; }
+/******/ 				}
+/******/ 			} else {
+/******/ 				for(var key in definition) {
+/******/ 					if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+/******/ 						Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 					}
+/******/ 				}
+/******/ 			}
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	(() => {
+/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/make namespace object */
+/******/ 	(() => {
+/******/ 		// define __esModule on exports
+/******/ 		__webpack_require__.r = (exports) => {
+/******/ 			if(Symbol.toStringTag) {
+/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 			}
+/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/************************************************************************/
+let __webpack_exports__ = {};
+// This entry needs to be wrapped in an IIFE because it needs to be isolated against other modules in the chunk.
+(() => {
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   activate: () => (/* binding */ activate),
+/* harmony export */   deactivate: () => (/* binding */ deactivate)
+/* harmony export */ });
+/* harmony import */ var vscode__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(1);
+/* harmony import */ var vscode__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(vscode__WEBPACK_IMPORTED_MODULE_0__);
+
+class PreViewProvider {
+    constructor(context) {
+        this.context = context;
+        this.refreshCallbacks = new Set();
+    }
+    refresh() {
+        this.refreshCallbacks.forEach(refresh => refresh());
+    }
+    async resolveCustomTextEditor(document, webviewPanel, _token) {
+        webviewPanel.webview.options = {
+            enableScripts: true,
+            enableCommandUris: true,
+            localResourceRoots: [
+                this.context.extensionUri,
+                vscode__WEBPACK_IMPORTED_MODULE_0__.Uri.joinPath(vscode__WEBPACK_IMPORTED_MODULE_0__.Uri.file(document.uri.fsPath), '..')
+            ]
+        };
+        const updateWebview = () => {
+            webviewPanel.webview.html = this.getWebviewContent(document, webviewPanel, Date.now());
+        };
+        this.refreshCallbacks.add(updateWebview);
+        updateWebview();
+        const changeDocumentSubscription = vscode__WEBPACK_IMPORTED_MODULE_0__.workspace.onDidChangeTextDocument(e => {
+            if (e.document.uri.toString() === document.uri.toString()) {
+                updateWebview();
+            }
+        });
+        const messageSubscription = webviewPanel.webview.onDidReceiveMessage(message => {
+            if (message?.type === 'refresh') {
+                updateWebview();
+            }
+        });
+        webviewPanel.onDidDispose(() => {
+            changeDocumentSubscription.dispose();
+            messageSubscription.dispose();
+            this.refreshCallbacks.delete(updateWebview);
+        });
+    }
+    getWebviewContent(document, webviewPanel, cacheBust) {
+        const scriptUri = webviewPanel.webview.asWebviewUri(vscode__WEBPACK_IMPORTED_MODULE_0__.Uri.joinPath(this.context.extensionUri, 'media', 'kicanvas.js')).with({ query: 'v=kicanvas-rounded-gr-rect-v2' });
+        const fileUri = webviewPanel.webview.asWebviewUri(document.uri).with({ query: `v=${cacheBust}` });
+        return `<!DOCTYPE html>
+			<html>
+			<head>
+				<style>
+					html,
+					body {
+						height: 100%;
+						margin: 0;
+						padding: 0;
+					}
+
+					.refresh-button {
+						align-items: center;
+						appearance: none;
+						background: #6b5194;
+						border: 0;
+						border-radius: 4px;
+						box-sizing: border-box;
+						color: #ffffff;
+						cursor: pointer;
+						display: flex;
+						height: 34px;
+						justify-content: center;
+						line-height: 0;
+						padding: 0;
+						position: fixed;
+						right: 84px;
+						top: 8px;
+						width: 34px;
+						z-index: 10;
+					}
+
+					.refresh-button:hover {
+						background: #765da2;
+					}
+
+					.refresh-button:focus-visible {
+						outline: 2px solid #ffffff;
+						outline-offset: 2px;
+					}
+
+					.refresh-button svg {
+						height: 16px;
+						width: 16px;
+					}
+
+					.copper-opacity-controls {
+						backdrop-filter: blur(8px);
+						background: rgba(38, 38, 38, 0.88);
+						border: 1px solid rgba(255, 255, 255, 0.14);
+						border-radius: 5px;
+						color: #ffffff;
+						display: grid;
+						font: 12px/1.2 system-ui, sans-serif;
+						gap: 7px;
+						padding: 8px 10px;
+						position: fixed;
+						right: 128px;
+						top: 8px;
+						width: 190px;
+						z-index: 10;
+					}
+
+					.copper-opacity-control {
+						align-items: center;
+						display: grid;
+						gap: 7px;
+						grid-template-columns: 32px 1fr 34px;
+					}
+
+					.copper-opacity-control input {
+						accent-color: #9b7acb;
+						margin: 0;
+						min-width: 0;
+					}
+
+					.copper-opacity-value {
+						font-variant-numeric: tabular-nums;
+						text-align: right;
+					}
+				</style>
+			</head>
+			<body>
+				<div class="copper-opacity-controls" aria-label="Copper layer opacity">
+					<label class="copper-opacity-control">
+						<span>F.Cu</span>
+						<input name="front-copper-opacity" type="range" min="0" max="1" step="0.05">
+						<output class="copper-opacity-value" for="front-copper-opacity"></output>
+					</label>
+					<label class="copper-opacity-control">
+						<span>B.Cu</span>
+						<input name="back-copper-opacity" type="range" min="0" max="1" step="0.05">
+						<output class="copper-opacity-value" for="back-copper-opacity"></output>
+					</label>
+				</div>
+				<button class="refresh-button" type="button" title="Refresh Preview" aria-label="Refresh Preview">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M20 11a8 8 0 1 0-2.34 5.66"></path>
+						<path d="M20 4v7h-7"></path>
+					</svg>
+				</button>
+				<script type="module" src="${scriptUri}"></script>
+				<kicanvas-embed src="${fileUri}" theme="kicad" controls="basic" controlslist="nooverlay"></kicanvas-embed>
+				<script>
+					const vscode = acquireVsCodeApi();
+					const embed = document.querySelector('kicanvas-embed');
+					const zoomButtonSelector = 'kc-ui-button[name^="zoom_to_"]';
+					const savedState = vscode.getState() ?? {};
+					const copperOpacity = {
+						front: normalizeOpacity(savedState.frontCopperOpacity),
+						back: normalizeOpacity(savedState.backCopperOpacity)
+					};
+					let currentZoomMode = 'zoom_to_page';
+
+					document.querySelector('.refresh-button')?.addEventListener('click', () => {
+						vscode.postMessage({ type: 'refresh' });
+					});
+
+					function normalizeOpacity(value) {
+						const numericValue = Number(value);
+						return Number.isFinite(numericValue)
+							? Math.min(1, Math.max(0, numericValue))
+							: 0.75;
+					}
+
+					function delay(ms) {
+						return new Promise(resolve => window.setTimeout(resolve, ms));
+					}
+
+					function getViewerApp() {
+						return embed?.shadowRoot?.querySelector('kc-board-app, kc-schematic-app') ?? null;
+					}
+
+					function getViewer() {
+						return getViewerApp()?.viewer ?? null;
+					}
+
+					function applyCopperLayerOpacity(layerName, opacity) {
+						const viewer = getViewer();
+						const layers = viewer?.layers;
+						if (!layers) {
+							return false;
+						}
+
+						let layerFound = false;
+						for (const name of [layerName, ':' + layerName + ':Zones']) {
+							const layer = layers.by_name?.(name);
+							if (layer) {
+								layer.opacity = opacity;
+								layerFound = true;
+							}
+						}
+
+						if (layerFound) {
+							viewer.draw?.();
+						}
+						return layerFound;
+					}
+
+					function saveCopperOpacity() {
+						vscode.setState({
+							...savedState,
+							frontCopperOpacity: copperOpacity.front,
+							backCopperOpacity: copperOpacity.back
+						});
+					}
+
+					function setupCopperOpacityControl(name, side, layerName) {
+						const input = document.querySelector('input[name="' + name + '"]');
+						const output = input?.parentElement?.querySelector('output');
+						if (!(input instanceof HTMLInputElement) || !(output instanceof HTMLOutputElement)) {
+							return;
+						}
+
+						const update = () => {
+							const opacity = normalizeOpacity(input.valueAsNumber);
+							copperOpacity[side] = opacity;
+							output.value = Math.round(opacity * 100) + '%';
+							applyCopperLayerOpacity(layerName, opacity);
+							saveCopperOpacity();
+						};
+
+						input.value = String(copperOpacity[side]);
+						output.value = Math.round(copperOpacity[side] * 100) + '%';
+						input.addEventListener('input', update);
+					}
+
+					async function applySavedCopperOpacity() {
+						const startedAt = Date.now();
+
+						while (Date.now() - startedAt < 10000) {
+							const frontApplied = applyCopperLayerOpacity('F.Cu', copperOpacity.front);
+							const backApplied = applyCopperLayerOpacity('B.Cu', copperOpacity.back);
+							if (frontApplied && backApplied) {
+								return;
+							}
+
+							await delay(50);
+						}
+					}
+
+					function getZoomButtons() {
+						const toolbar = getViewerApp()?.shadowRoot?.querySelector('kc-viewer-bottom-toolbar');
+						return Array.from(toolbar?.shadowRoot?.querySelectorAll(zoomButtonSelector) ?? []);
+					}
+
+					function isButtonEnabled(button) {
+						return !button.disabled && !button.hasAttribute('disabled');
+					}
+
+					async function waitForZoomControls() {
+						const startedAt = Date.now();
+
+						while (Date.now() - startedAt < 10000) {
+							const buttons = getZoomButtons();
+							if (buttons.length > 0) {
+								return buttons;
+							}
+
+							await delay(50);
+						}
+
+						return [];
+					}
+
+					function zoomWithViewer(modeName) {
+						const viewer = getViewer();
+						if (!viewer) {
+							return false;
+						}
+
+						switch (modeName) {
+							case 'zoom_to_page':
+								viewer.zoom_to_page?.();
+								return true;
+							case 'zoom_to_selection':
+								viewer.zoom_to_selection?.();
+								return true;
+							case 'zoom_to_edge_cuts':
+								viewer.zoom_to_board?.();
+								return true;
+							default:
+								return false;
+						}
+					}
+
+					async function applyZoomMode(modeName) {
+						const buttons = await waitForZoomControls();
+						const button = buttons.find(item => item.name === modeName);
+
+						if (button && isButtonEnabled(button)) {
+							button.click();
+							currentZoomMode = modeName;
+							return;
+						}
+
+						if (zoomWithViewer(modeName)) {
+							currentZoomMode = modeName;
+						}
+					}
+
+					async function cycleZoomMode() {
+						const buttons = (await waitForZoomControls()).filter(isButtonEnabled);
+						const modes = buttons.map(button => button.name);
+
+						if (modes.length === 0) {
+							await applyZoomMode('zoom_to_page');
+							return;
+						}
+
+						const currentIndex = modes.indexOf(currentZoomMode);
+						const nextMode = modes[(currentIndex + 1) % modes.length];
+						await applyZoomMode(nextMode);
+					}
+
+					document.addEventListener('keydown', event => {
+						if (event.code !== 'Space' || event.ctrlKey || event.altKey || event.metaKey) {
+							return;
+						}
+
+						const target = event.target;
+						if (target instanceof HTMLElement && target.closest('input, textarea, select, button')) {
+							return;
+						}
+
+						event.preventDefault();
+						void cycleZoomMode();
+					});
+
+					setupCopperOpacityControl('front-copper-opacity', 'front', 'F.Cu');
+					setupCopperOpacityControl('back-copper-opacity', 'back', 'B.Cu');
+					void applySavedCopperOpacity();
+					void applyZoomMode('zoom_to_page');
+				</script>
+			</body>
+			</html>`;
+    }
+}
+function activate(context) {
+    const provider = new PreViewProvider(context);
+    context.subscriptions.push(vscode__WEBPACK_IMPORTED_MODULE_0__.window.registerCustomEditorProvider('kilens.preview', provider, { webviewOptions: { retainContextWhenHidden: true } }), vscode__WEBPACK_IMPORTED_MODULE_0__.commands.registerCommand('kilens.refresh', () => provider.refresh()));
+}
+function deactivate() { }
+
+})();
+
+module.exports = __webpack_exports__;
+/******/ })()
+;
+//# sourceMappingURL=extension.js.map

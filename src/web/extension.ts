@@ -56,7 +56,7 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 	): string {
 		const scriptUri = webviewPanel.webview.asWebviewUri(
 			vscode.Uri.joinPath(this.context.extensionUri, 'media', 'kicanvas.js')
-		).with({ query: 'v=kicanvas-zoom-edge-cuts-icon' });
+		).with({ query: 'v=kicanvas-rounded-gr-rect-v2' });
 
 		const fileUri = webviewPanel.webview.asWebviewUri(document.uri).with({ query: `v=${cacheBust}` });
 		
@@ -105,9 +105,56 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 						height: 16px;
 						width: 16px;
 					}
+
+					.copper-opacity-controls {
+						backdrop-filter: blur(8px);
+						background: rgba(38, 38, 38, 0.88);
+						border: 1px solid rgba(255, 255, 255, 0.14);
+						border-radius: 5px;
+						color: #ffffff;
+						display: grid;
+						font: 12px/1.2 system-ui, sans-serif;
+						gap: 7px;
+						padding: 8px 10px;
+						position: fixed;
+						right: 128px;
+						top: 8px;
+						width: 190px;
+						z-index: 10;
+					}
+
+					.copper-opacity-control {
+						align-items: center;
+						display: grid;
+						gap: 7px;
+						grid-template-columns: 32px 1fr 34px;
+					}
+
+					.copper-opacity-control input {
+						accent-color: #9b7acb;
+						margin: 0;
+						min-width: 0;
+					}
+
+					.copper-opacity-value {
+						font-variant-numeric: tabular-nums;
+						text-align: right;
+					}
 				</style>
 			</head>
 			<body>
+				<div class="copper-opacity-controls" aria-label="Copper layer opacity">
+					<label class="copper-opacity-control">
+						<span>F.Cu</span>
+						<input name="front-copper-opacity" type="range" min="0" max="1" step="0.05">
+						<output class="copper-opacity-value" for="front-copper-opacity"></output>
+					</label>
+					<label class="copper-opacity-control">
+						<span>B.Cu</span>
+						<input name="back-copper-opacity" type="range" min="0" max="1" step="0.05">
+						<output class="copper-opacity-value" for="back-copper-opacity"></output>
+					</label>
+				</div>
 				<button class="refresh-button" type="button" title="Refresh Preview" aria-label="Refresh Preview">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 						<path d="M20 11a8 8 0 1 0-2.34 5.66"></path>
@@ -120,11 +167,23 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 					const vscode = acquireVsCodeApi();
 					const embed = document.querySelector('kicanvas-embed');
 					const zoomButtonSelector = 'kc-ui-button[name^="zoom_to_"]';
+					const savedState = vscode.getState() ?? {};
+					const copperOpacity = {
+						front: normalizeOpacity(savedState.frontCopperOpacity),
+						back: normalizeOpacity(savedState.backCopperOpacity)
+					};
 					let currentZoomMode = 'zoom_to_page';
 
 					document.querySelector('.refresh-button')?.addEventListener('click', () => {
 						vscode.postMessage({ type: 'refresh' });
 					});
+
+					function normalizeOpacity(value) {
+						const numericValue = Number(value);
+						return Number.isFinite(numericValue)
+							? Math.min(1, Math.max(0, numericValue))
+							: 0.75;
+					}
 
 					function delay(ms) {
 						return new Promise(resolve => window.setTimeout(resolve, ms));
@@ -136,6 +195,70 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 
 					function getViewer() {
 						return getViewerApp()?.viewer ?? null;
+					}
+
+					function applyCopperLayerOpacity(layerName, opacity) {
+						const viewer = getViewer();
+						const layers = viewer?.layers;
+						if (!layers) {
+							return false;
+						}
+
+						let layerFound = false;
+						for (const name of [layerName, ':' + layerName + ':Zones']) {
+							const layer = layers.by_name?.(name);
+							if (layer) {
+								layer.opacity = opacity;
+								layerFound = true;
+							}
+						}
+
+						if (layerFound) {
+							viewer.draw?.();
+						}
+						return layerFound;
+					}
+
+					function saveCopperOpacity() {
+						vscode.setState({
+							...savedState,
+							frontCopperOpacity: copperOpacity.front,
+							backCopperOpacity: copperOpacity.back
+						});
+					}
+
+					function setupCopperOpacityControl(name, side, layerName) {
+						const input = document.querySelector('input[name="' + name + '"]');
+						const output = input?.parentElement?.querySelector('output');
+						if (!(input instanceof HTMLInputElement) || !(output instanceof HTMLOutputElement)) {
+							return;
+						}
+
+						const update = () => {
+							const opacity = normalizeOpacity(input.valueAsNumber);
+							copperOpacity[side] = opacity;
+							output.value = Math.round(opacity * 100) + '%';
+							applyCopperLayerOpacity(layerName, opacity);
+							saveCopperOpacity();
+						};
+
+						input.value = String(copperOpacity[side]);
+						output.value = Math.round(copperOpacity[side] * 100) + '%';
+						input.addEventListener('input', update);
+					}
+
+					async function applySavedCopperOpacity() {
+						const startedAt = Date.now();
+
+						while (Date.now() - startedAt < 10000) {
+							const frontApplied = applyCopperLayerOpacity('F.Cu', copperOpacity.front);
+							const backApplied = applyCopperLayerOpacity('B.Cu', copperOpacity.back);
+							if (frontApplied && backApplied) {
+								return;
+							}
+
+							await delay(50);
+						}
 					}
 
 					function getZoomButtons() {
@@ -226,6 +349,9 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 						void cycleZoomMode();
 					});
 
+					setupCopperOpacityControl('front-copper-opacity', 'front', 'F.Cu');
+					setupCopperOpacityControl('back-copper-opacity', 'back', 'B.Cu');
+					void applySavedCopperOpacity();
 					void applyZoomMode('zoom_to_page');
 				</script>
 			</body>
