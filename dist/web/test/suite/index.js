@@ -21683,16 +21683,72 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var assert__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(assert__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var vscode__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(82);
 /* harmony import */ var vscode__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(vscode__WEBPACK_IMPORTED_MODULE_1__);
+/* harmony import */ var _kicadPcbEditor__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(83);
 
 // You can import and use all API from the 'vscode' module
 // as well as import your extension to test it
 
-// import * as myExtension from '../../extension';
+
 suite('Web Extension Test Suite', () => {
     vscode__WEBPACK_IMPORTED_MODULE_1__.window.showInformationMessage('Start all tests.');
     test('Sample test', () => {
         assert__WEBPACK_IMPORTED_MODULE_0__.strictEqual(-1, [1, 2, 3].indexOf(5));
         assert__WEBPACK_IMPORTED_MODULE_0__.strictEqual(-1, [1, 2, 3].indexOf(0));
+    });
+    test('Updates only the selected footprint placement', () => {
+        const source = `(kicad_pcb
+  (footprint "Package:One"
+    (layer "F.Cu")
+    (uuid "first-id")
+    (at 1 2)
+    (pad "1" smd rect (at 9 8 45) (size 1 1) (layers "F.Cu")))
+  (footprint "Package:Two"
+    (layer "F.Cu")
+    (at 3 4 180)
+    (tstamp second-id)))`;
+        const replacement = (0,_kicadPcbEditor__WEBPACK_IMPORTED_MODULE_2__.createFootprintPlacementReplacement)(source, {
+            id: 'first-id',
+            x: 10.125,
+            y: -0,
+            rotation: 90
+        });
+        const result = source.slice(0, replacement.start)
+            + replacement.text
+            + source.slice(replacement.end);
+        assert__WEBPACK_IMPORTED_MODULE_0__.ok(result.includes('(uuid "first-id")\n    (at 10.125 0 90)'));
+        assert__WEBPACK_IMPORTED_MODULE_0__.ok(result.includes('(pad "1" smd rect (at 9 8 45)'));
+        assert__WEBPACK_IMPORTED_MODULE_0__.ok(result.includes('(at 3 4 180)'));
+    });
+    test('Finds legacy footprint timestamps', () => {
+        const source = `(kicad_pcb
+  (footprint "Package:Two"
+    (at 3 4 180)
+    (tstamp second-id)))`;
+        const replacement = (0,_kicadPcbEditor__WEBPACK_IMPORTED_MODULE_2__.createFootprintPlacementReplacement)(source, {
+            id: 'second-id',
+            x: 5,
+            y: 6,
+            rotation: 270
+        });
+        assert__WEBPACK_IMPORTED_MODULE_0__.strictEqual(replacement.text, '(at 5 6 270)');
+    });
+    test('Rejects locked or missing footprints', () => {
+        const source = `(kicad_pcb
+  (footprint "Package:Locked" locked
+    (at 1 2 0)
+    (uuid locked-id)))`;
+        assert__WEBPACK_IMPORTED_MODULE_0__.throws(() => (0,_kicadPcbEditor__WEBPACK_IMPORTED_MODULE_2__.createFootprintPlacementReplacement)(source, {
+            id: 'locked-id',
+            x: 2,
+            y: 3,
+            rotation: 0
+        }), /locked/);
+        assert__WEBPACK_IMPORTED_MODULE_0__.throws(() => (0,_kicadPcbEditor__WEBPACK_IMPORTED_MODULE_2__.createFootprintPlacementReplacement)(source, {
+            id: 'missing-id',
+            x: 2,
+            y: 3,
+            rotation: 0
+        }), /Could not find/);
     });
 });
 
@@ -27180,6 +27236,145 @@ module.exports = function shimNumberIsNaN() {
 
 "use strict";
 module.exports = require("vscode");
+
+/***/ }),
+/* 83 */
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   createFootprintPlacementReplacement: () => (/* binding */ createFootprintPlacementReplacement)
+/* harmony export */ });
+function parseString(text, start) {
+    let value = '';
+    let index = start + 1;
+    while (index < text.length) {
+        const character = text[index];
+        if (character === '"') {
+            return { kind: 'atom', value, start, end: index + 1 };
+        }
+        if (character === '\\' && index + 1 < text.length) {
+            value += text[index + 1];
+            index += 2;
+            continue;
+        }
+        value += character;
+        index++;
+    }
+    throw new Error('Unterminated string in KiCad document.');
+}
+function parseDocument(text) {
+    const root = { kind: 'list', start: 0, end: text.length, items: [] };
+    const stack = [root];
+    let index = 0;
+    while (index < text.length) {
+        const character = text[index];
+        if (/\s/.test(character)) {
+            index++;
+            continue;
+        }
+        if (character === '(') {
+            const list = { kind: 'list', start: index, end: -1, items: [] };
+            stack[stack.length - 1].items.push(list);
+            stack.push(list);
+            index++;
+            continue;
+        }
+        if (character === ')') {
+            if (stack.length === 1) {
+                throw new Error('Unexpected closing parenthesis in KiCad document.');
+            }
+            stack.pop().end = index + 1;
+            index++;
+            continue;
+        }
+        let atom;
+        if (character === '"') {
+            atom = parseString(text, index);
+        }
+        else {
+            let end = index + 1;
+            while (end < text.length && !/[\s()]/.test(text[end])) {
+                end++;
+            }
+            atom = {
+                kind: 'atom',
+                value: text.slice(index, end),
+                start: index,
+                end
+            };
+        }
+        stack[stack.length - 1].items.push(atom);
+        index = atom.end;
+    }
+    if (stack.length !== 1) {
+        throw new Error('Unterminated list in KiCad document.');
+    }
+    return root;
+}
+function head(list) {
+    const first = list.items[0];
+    return first?.kind === 'atom' ? first.value : undefined;
+}
+function childList(list, name) {
+    return list.items.find((item) => item.kind === 'list' && head(item) === name);
+}
+function secondAtom(list) {
+    const item = list.items[1];
+    return item?.kind === 'atom' ? item : undefined;
+}
+function findFootprint(root, id) {
+    const pending = [root];
+    while (pending.length > 0) {
+        const current = pending.pop();
+        if (head(current) === 'footprint') {
+            for (const idName of ['uuid', 'tstamp']) {
+                const idList = childList(current, idName);
+                if (idList && secondAtom(idList)?.value === id) {
+                    return current;
+                }
+            }
+        }
+        for (const item of current.items) {
+            if (item.kind === 'list') {
+                pending.push(item);
+            }
+        }
+    }
+    return undefined;
+}
+function formatNumber(value) {
+    if (!Number.isFinite(value)) {
+        throw new Error('Footprint coordinates and rotation must be finite numbers.');
+    }
+    const rounded = Math.round(value * 1000000) / 1000000;
+    return Object.is(rounded, -0) ? '0' : String(rounded);
+}
+function createFootprintPlacementReplacement(text, placement) {
+    if (!placement.id) {
+        throw new Error('The selected footprint has no UUID or timestamp.');
+    }
+    const root = parseDocument(text);
+    const footprint = findFootprint(root, placement.id);
+    if (!footprint) {
+        throw new Error(`Could not find footprint ${placement.id} in the current document.`);
+    }
+    const locked = footprint.items.some(item => item.kind === 'atom' && item.value === 'locked');
+    if (locked) {
+        throw new Error('The selected footprint is locked.');
+    }
+    const at = childList(footprint, 'at');
+    if (!at || at.end < 0) {
+        throw new Error(`Footprint ${placement.id} has no placement.`);
+    }
+    return {
+        start: at.start,
+        end: at.end,
+        text: `(at ${formatNumber(placement.x)} ${formatNumber(placement.y)} ${formatNumber(placement.rotation)})`
+    };
+}
+
 
 /***/ })
 /******/ 	]);
