@@ -120,8 +120,18 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 					html,
 					body {
 						height: 100%;
+						width: 100%;
 						margin: 0;
+						overflow: hidden;
 						padding: 0;
+					}
+
+					kicanvas-embed {
+						aspect-ratio: auto;
+						height: 100%;
+						max-height: none;
+						max-width: none;
+						width: 100%;
 					}
 
 					.refresh-button {
