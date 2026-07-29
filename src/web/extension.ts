@@ -358,12 +358,15 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 					const vscode = acquireVsCodeApi();
 					const embed = document.querySelector('kicanvas-embed');
 					const zoomButtonSelector = 'kc-ui-button[name^="zoom_to_"]';
+					const isSchematicDocument = ${documentName.toLowerCase().endsWith('.kicad_sch')};
 					let savedState = vscode.getState() ?? {};
 					const copperOpacity = {
 						front: normalizeOpacity(savedState.frontCopperOpacity),
 						back: normalizeOpacity(savedState.backCopperOpacity)
 					};
-					let currentZoomMode = 'zoom_to_page';
+					let currentZoomMode = isSchematicDocument
+						? 'zoom_to_schematic'
+						: 'zoom_to_page';
 					let selectedFootprint = null;
 
 					const placementEditor = document.querySelector('.placement-editor');
@@ -608,8 +611,11 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 							return;
 						}
 
+						await setupSchematicZoomControl();
 						if (!restoreViewerState(viewer)) {
-							await applyZoomMode('zoom_to_page');
+							await applyZoomMode(isSchematicDocument
+								? 'zoom_to_schematic'
+								: 'zoom_to_page');
 						}
 						if (!viewer.board) {
 							return;
@@ -721,6 +727,72 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 						return [];
 					}
 
+					function zoomSchematicToContents() {
+						const viewer = getViewer();
+						const camera = viewer?.viewport?.camera;
+						if (!viewer?.schematic || !camera) {
+							return false;
+						}
+
+						const contentLayerNames = [
+							':Marks',
+							':Symbol:Field',
+							':Label',
+							':Junction',
+							':Wire',
+							':Symbol:Foreground',
+							':Notes',
+							':Bitmap',
+							':Symbol:Pin',
+							':Symbol:Background'
+						];
+						const bounds = contentLayerNames
+							.map(name => viewer.layers?.by_name?.(name)?.bbox)
+							.filter(bbox => bbox?.valid);
+						if (bounds.length === 0) {
+							viewer.zoom_to_page?.();
+							return true;
+						}
+
+						const left = Math.min(...bounds.map(bbox => bbox.x));
+						const top = Math.min(...bounds.map(bbox => bbox.y));
+						const right = Math.max(...bounds.map(bbox => bbox.x2));
+						const bottom = Math.max(...bounds.map(bbox => bbox.y2));
+						const contentBounds = bounds[0].copy();
+						contentBounds.x = left;
+						contentBounds.y = top;
+						contentBounds.w = right - left;
+						contentBounds.h = bottom - top;
+						const padding = Math.max(contentBounds.w, contentBounds.h) * 0.08;
+						camera.bbox = contentBounds.grow(Math.max(padding, 5));
+						viewer.draw?.();
+						return true;
+					}
+
+					async function setupSchematicZoomControl() {
+						if (!isSchematicDocument) {
+							return;
+						}
+						const buttons = await waitForZoomControls();
+						const schematicButton = buttons.find(
+							button => button.name === 'zoom_to_edge_cuts'
+						);
+						if (!schematicButton) {
+							return;
+						}
+						schematicButton.name = 'zoom_to_schematic';
+						schematicButton.title = 'zoom to schematic';
+						schematicButton.setAttribute('icon', 'svg:schematic_file');
+						schematicButton.disabled = false;
+						schematicButton.removeAttribute('disabled');
+						schematicButton.addEventListener('click', event => {
+							event.preventDefault();
+							event.stopImmediatePropagation();
+							zoomSchematicToContents();
+							currentZoomMode = 'zoom_to_schematic';
+						}, { capture: true });
+					}
+
 					function zoomWithViewer(modeName) {
 						const viewer = getViewer();
 						if (!viewer) {
@@ -728,6 +800,8 @@ class PreViewProvider implements vscode.CustomTextEditorProvider {
 						}
 
 						switch (modeName) {
+							case 'zoom_to_schematic':
+								return zoomSchematicToContents();
 							case 'zoom_to_page':
 								viewer.zoom_to_page?.();
 								return true;
