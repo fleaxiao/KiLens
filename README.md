@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/fleaxiao/KiLens/main/icon.png" alt="KiLens icon" width="128" />
+  <img src="https://raw.githubusercontent.com/fleaxiao/KiLens/main/icon.png?v=20260803" alt="KiLens circuit magnifier icon" width="128" />
 </p>
 
 # KiLens
