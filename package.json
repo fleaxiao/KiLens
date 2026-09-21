@@ -1,0 +1,169 @@
+{
+	"name": "kilens",
+	"displayName": "KiLens",
+	"description": "KiCad schematic and PCB files Preview",
+	"version": "1.0.0",
+	"publisher": "fleaxiao",
+	"license": "MIT",
+	"icon": "icon.png",
+	"repository": "https://github.com/fleaxiao/KiLens",
+	"homepage": "https://github.com/fleaxiao/KiLens#readme",
+	"bugs": {
+		"url": "https://github.com/fleaxiao/KiLens/issues"
+	},
+	"engines": {
+		"vscode": "^1.74.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"kicad",
+		"pcb",
+		"schematic",
+		"viewer",
+		"electronics"
+	],
+	"capabilities": {
+		"untrustedWorkspaces": {
+			"supported": true
+		},
+		"virtualWorkspaces": true
+	},
+	"activationEvents": [
+		"onCustomEditor:kilens.preview",
+		"onCommand:kilens.refresh"
+	],
+	"browser": "./dist/web/extension.js",
+	"contributes": {
+		"languages": [
+			{
+				"id": "kilens-kicad-pcb",
+				"aliases": [
+					"KiCad PCB"
+				],
+				"extensions": [
+					".kicad_pcb"
+				],
+				"icon": {
+					"light": "media/kicad-pcb.svg",
+					"dark": "media/kicad-pcb.svg"
+				}
+			},
+			{
+				"id": "kilens-kicad-project-local",
+				"aliases": [
+					"KiCad Project Local Settings"
+				],
+				"extensions": [
+					".kicad_prl"
+				],
+				"icon": {
+					"light": "media/kicad-project-local.svg",
+					"dark": "media/kicad-project-local.svg"
+				}
+			},
+			{
+				"id": "kilens-kicad-project",
+				"aliases": [
+					"KiCad Project"
+				],
+				"extensions": [
+					".kicad_pro"
+				],
+				"icon": {
+					"light": "media/kicad-project.svg",
+					"dark": "media/kicad-project.svg"
+				}
+			},
+			{
+				"id": "kilens-kicad-schematic",
+				"aliases": [
+					"KiCad Schematic"
+				],
+				"extensions": [
+					".kicad_sch"
+				],
+				"icon": {
+					"light": "media/kicad-schematic.svg",
+					"dark": "media/kicad-schematic.svg"
+				}
+			}
+		],
+		"commands": [
+			{
+				"command": "kilens.refresh",
+				"title": "Refresh Preview",
+				"icon": "$(refresh)"
+			}
+		],
+		"customEditors": [
+			{
+				"viewType": "kilens.preview",
+				"displayName": "KiCAD Viewer",
+				"selector": [
+					{
+						"filenamePattern": "*.kicad_pcb"
+					},
+					{
+						"filenamePattern": "*.kicad_sch"
+					}
+				]
+			}
+		],
+		"menus": {
+			"editor/title": [
+				{
+					"command": "kilens.refresh",
+					"when": "activeCustomEditorId == kilens.preview",
+					"group": "navigation"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"test": "vscode-test-web --browserType=chromium --extensionDevelopmentPath=. --extensionTestsPath=dist/web/test/suite/index.js",
+		"pretest": "npm run compile-web",
+		"vscode:prepublish": "npm run package-web",
+		"compile-web": "webpack",
+		"test-ratsnest": "node scripts/test-preview-nets.cjs && node scripts/test-ratsnest.cjs && node scripts/test-ratsnest-browser.cjs",
+		"patch-kicanvas": "node scripts/patch-kicanvas-rounded-rect.cjs && node scripts/patch-kicanvas-front-component-order.cjs && node scripts/patch-kicanvas-copper-opacity.cjs",
+		"watch-web": "webpack --watch",
+		"package-web": "webpack --env extensionOnly --mode production --devtool hidden-source-map",
+		"lint": "eslint",
+		"package": "vsce package",
+		"publish": "vsce publish"
+	},
+	"files": [
+		"dist/web/extension.js",
+		"media",
+		"icon.png",
+		"LICENSE",
+		"LICENSE.KICAD-ICONS",
+		"NOTICE"
+	],
+	"devDependencies": {
+		"@eslint/js": "^9.13.0",
+		"@stylistic/eslint-plugin": "^2.9.0",
+		"@types/mocha": "^10.0.10",
+		"@types/node": "^26.1.1",
+		"@types/vscode": "^1.73.0",
+		"@types/webpack-env": "^1.16.2",
+		"@vscode/test-web": "^0.0.81",
+		"@vscode/vsce": "^3.9.2",
+		"assert": "^2.0.0",
+		"eslint": "^9.13.0",
+		"mocha": "^11.7.6",
+		"path-browserify": "^1.0.1",
+		"process": "^0.11.10",
+		"ts-loader": "^9.2.5",
+		"typescript": "^5.7.2",
+		"typescript-eslint": "^8.16.0",
+		"webpack": "^5.52.1",
+		"webpack-cli": "^4.8.0"
+	},
+	"overrides": {
+		"diff": "^9.0.0",
+		"serialize-javascript": "^7.0.7"
+	}
+}

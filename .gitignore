@@ -1,0 +1,7 @@
+node_modules/
+.vscode-test-web/
+*.vsix
+dist/
+*.log
+.vsixmanifest
+.git-backup*/

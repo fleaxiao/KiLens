@@ -1,0 +1,187 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const ts = require('typescript');
+const { chromium } = require('playwright');
+
+const board = `(kicad_pcb (version 20240108) (generator pcbnew)
+  (general (thickness 1.6)) (paper "A4")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (setup (pad_to_mask_clearance 0)) (net 0 "") (net 1 "SIGNAL")
+  (gr_rect (start 5 5) (end 45 35) (stroke (width 0.05) (type default)) (fill none) (layer "Edge.Cuts"))
+  (footprint "Test" (layer "F.Cu") (at 10 10) (uuid "pad-a")
+    (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SIGNAL")))
+  (footprint "Test" (layer "F.Cu") (at 40 30) (uuid "pad-b")
+    (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SIGNAL")))
+)`;
+
+function html(source) {
+    const uri = path => ({ path, fsPath: path, with() { return this; }, toString() { return this.path; } });
+    const vscode = { Uri: { joinPath: (base, ...parts) => uri(base.path + '/' + parts.join('/')) } };
+    const editor = { exports: {} };
+    vm.createContext(editor);
+    vm.runInContext(ts.transpileModule(fs.readFileSync('src/web/kicadPcbEditor.ts', 'utf8'), {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+    }).outputText, editor);
+    const context = { exports: {}, require: name => name === 'vscode' ? vscode : editor.exports, URL };
+    vm.createContext(context);
+    vm.runInContext(ts.transpileModule(fs.readFileSync('src/web/previewContent.ts', 'utf8'), {
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+    }).outputText, context);
+    return context.exports.getWebviewContent(
+        uri('https://kilens.test'),
+        { uri: uri('/fixture.kicad_pcb'), getText: () => source },
+        { webview: { asWebviewUri: value => value } }
+    );
+}
+
+(async () => {
+    const browser = await chromium.launch({ headless: true, args: ['--disable-logging'] });
+    try {
+        const page = await browser.newPage({ viewport: {
+            width: Number(process.env.KILENS_VIEWPORT_WIDTH ?? 1000),
+            height: Number(process.env.KILENS_VIEWPORT_HEIGHT ?? 700)
+        } });
+        const errors = [];
+        page.on('pageerror', e => errors.push(e.message));
+        page.on('console', m => { if (m.type() === 'error') console.log('console:', m.text()); });
+        await page.addInitScript(() => { window.acquireVsCodeApi = () => ({ getState: () => ({}), setState(value) { window.savedPreviewState = value; }, postMessage() {} }); });
+        await page.route('**/*', route => {
+            const url = new URL(route.request().url());
+            if (url.hostname === 'fonts.googleapis.com') return route.fulfill({ body: '', contentType: 'text/css' });
+            if (url.hostname !== 'kilens.test') return route.abort();
+            if (url.pathname === '/media/kicanvas.js') {
+                const bundle = fs.readFileSync('media/kicanvas.js', 'utf8');
+                const hook = 'on_draw(){if(this.renderer.clear_canvas()';
+                assert.equal(bundle.split(hook).length, 2);
+                return route.fulfill({ contentType: 'text/javascript', body: bundle.replace(hook,
+                    'on_draw(){if(this.board&&this.layers){(window.copperFrames??=[]).push(["F.Cu","B.Cu",":F.Cu:Zones",":B.Cu:Zones"].map(n=>this.layers.by_name(n)?.opacity))}if(this.renderer.clear_canvas()') });
+            }
+            if (url.pathname.startsWith('/media/')) return route.fulfill({ path: '.' + url.pathname, contentType: 'text/javascript' });
+            return route.fulfill({ body: html(process.argv[2] ? fs.readFileSync(process.argv[2], 'utf8') : board), contentType: 'text/html; charset=utf-8' });
+        });
+        await page.goto('https://kilens.test/');
+        await page.waitForFunction(() => document.querySelector('input[type=checkbox]'));
+        console.log('Initial:', JSON.stringify(await page.evaluate(() => ({
+            errors: null,
+            embed: !!document.querySelector('kicanvas-embed')?.shadowRoot,
+            app: !!getViewerApp(),
+            loaded: getViewer()?.loaded?.isOpen,
+            board: !!getViewer()?.board,
+            nets: getViewer()?.board?.footprints?.slice(0, 1).map(f => f.pads.map(p => p.net)),
+            edges: KiLensRatsnest.buildRatsnest(getViewer().board).length,
+            checkboxes: document.querySelectorAll('input[type=checkbox]').length
+        }))), 'errors:', errors);
+        assert.ok(await page.evaluate(() => document.querySelector('.pcb-display-controls').getBoundingClientRect().top > document.querySelector('.refresh-button').getBoundingClientRect().bottom), 'Panel sits below toolbar');
+        const netCount = await page.locator('input[name=visible-net]').count();
+        const listMetrics = await page.locator('.net-list').evaluate(list => {
+            const panel = list.closest('.pcb-display-controls');
+            const controls = list.closest('.net-display-controls');
+            return {
+                viewportHeight: innerHeight,
+                panelHeight: panel.getBoundingClientRect().height,
+                panelTop: panel.getBoundingClientRect().top,
+                controlsHeight: controls.getBoundingClientRect().height,
+                clientHeight: list.clientHeight,
+                scrollHeight: list.scrollHeight,
+                rowHeights: [...list.children].map(row => row.getBoundingClientRect().height),
+                listGap: getComputedStyle(list).gap,
+                fontSize: getComputedStyle(panel).fontSize
+            };
+        });
+        console.log('List metrics:', listMetrics);
+        if (netCount <= 8) {
+            await page.evaluate(() => new Promise(requestAnimationFrame));
+            assert.equal(await page.locator('.net-list').evaluate(list => list.classList.contains('needs-scroll')), false,
+                'A one-pixel layout rounding difference must not show a scrollbar');
+        }
+        assert.equal(await page.locator('input[name$="copper-opacity"]').count(), 0);
+        const frames = await page.evaluate(() => window.copperFrames);
+        assert.ok(frames.length > 0);
+        assert.ok(frames.every(frame => frame.every(opacity => opacity == null || opacity === 0.75)), 'Copper starts at 75% on the very first frame');
+        assert.ok(netCount > 0, 'Actual board nets are listed');
+        for (const input of await page.locator('input[name=visible-net]').all()) await input.uncheck();
+        await page.waitForFunction(() => getViewer().canvas.parentNode.querySelector('[data-kilens-ratsnest]').dataset.visibleEdgeCount === '0');
+        assert.equal(await page.evaluate(() => window.savedPreviewState.hiddenNets.length), netCount);
+        await page.locator('input[name=visible-net]').first().check();
+        await page.evaluate(() => new Promise(requestAnimationFrame));
+        const filtered = await page.evaluate(() => {
+            const name = document.querySelector('input[name=visible-net]').value;
+            const board = getViewer().board;
+            const net = board.nets.find(n => n.name === name).number;
+            return { expected: KiLensRatsnest.buildRatsnest(board).filter(edge => edge.net === net).length,
+                actual: Number(getViewer().canvas.parentNode.querySelector('[data-kilens-ratsnest]').dataset.visibleEdgeCount) };
+        });
+        assert.equal(filtered.actual, filtered.expected, 'Only the checked net is visible');
+        if (process.env.KILENS_SCREENSHOT) await page.screenshot({ path: process.env.KILENS_SCREENSHOT });
+        for (const input of await page.locator('input[name=visible-net]').all()) await input.check();
+        await page.evaluate(() => new Promise(requestAnimationFrame));
+        assert.equal(await page.locator('.pcb-display-controls input[type=checkbox]').count(), netCount);
+        const pixels = () => page.evaluate(() => {
+            const canvas = getViewer().canvas.parentNode.querySelector('[data-kilens-ratsnest]');
+            const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+            let count = 0;
+            for (let i = 3; i < data.length; i += 4) if (data[i]) count++;
+            return count;
+        });
+        assert.ok(await pixels() > 0, 'Airwires must produce visible pixels');
+        await page.locator('button[name=ratsnest-visible]').click();
+        assert.equal(await page.locator('button[name=ratsnest-visible]').getAttribute('aria-pressed'), 'false');
+        assert.equal(await page.locator('input[name=visible-net]:checked').count(), 0);
+        assert.equal(await page.evaluate(() => window.savedPreviewState.hiddenNets.length), netCount);
+        await page.waitForFunction(() => {
+            const c = getViewer().canvas.parentNode.querySelector('[data-kilens-ratsnest]');
+            return !c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((value, i) => i % 4 === 3 && value);
+        });
+        assert.equal(await pixels(), 0);
+        const netWithAirwires = await page.evaluate(() => {
+            const edge = KiLensRatsnest.buildRatsnest(getViewer().board)[0];
+            return getViewer().board.nets.find(net => net.number === edge.net).name;
+        });
+        const selectedNet = page.locator('input[name=visible-net]').filter({ visible: true });
+        const netIndex = await selectedNet.evaluateAll((inputs, name) => inputs.findIndex(input => input.value === name), netWithAirwires);
+        await selectedNet.nth(netIndex).check();
+        await page.evaluate(() => new Promise(requestAnimationFrame));
+        assert.ok(await pixels() > 0, 'Selecting a net after deselect all immediately restores its airwires');
+        assert.equal(await page.locator('input[name=visible-net]:checked').count(), 1);
+        await selectedNet.nth(netIndex).uncheck();
+        await page.locator('button[name=ratsnest-visible]').click();
+        assert.equal(await page.locator('button[name=ratsnest-visible]').getAttribute('aria-pressed'), 'true');
+        assert.equal(await page.locator('input[name=visible-net]:checked').count(), netCount);
+        assert.equal(await page.evaluate(() => window.savedPreviewState.hiddenNets.length), 0);
+        assert.equal(await page.locator('.net-display-controls button').count(), 1);
+        await page.evaluate(async () => {
+            const viewer = getViewer();
+            viewer.viewport.camera.zoom *= 1.4;
+            viewer.viewport.camera.center.x += 2;
+            viewer.flip_view();
+            await new Promise(requestAnimationFrame);
+        });
+        await page.setViewportSize({ width: 1100, height: 750 });
+        await page.waitForFunction(() => {
+            const v = getViewer(), c = v.canvas.parentNode.querySelector('[data-kilens-ratsnest]');
+            return c.width === v.canvas.clientWidth * devicePixelRatio;
+        });
+        assert.ok(await pixels() > 0, 'Airwires survive pan, zoom, flip and resize');
+        // Inject synthetic routes into the in-memory model only; the user's file is untouched.
+        const remaining = await page.evaluate(async () => {
+            const viewer = getViewer(), board = viewer.board;
+            const { edges } = KiLensConnectivity.analyze(board);
+            const oldTracks = [...board.segments];
+            for (const edge of edges) board.segments.push({ net: edge.net, start: edge.start, end: edge.end, layer: 'F.Cu', width: 0.2 });
+            viewer.paint();
+            viewer.draw();
+            await new Promise(requestAnimationFrame);
+            const count = Number(viewer.canvas.parentNode.querySelector('[data-kilens-ratsnest]').dataset.edgeCount);
+            board.segments = oldTracks;
+            viewer.paint();
+            viewer.draw();
+            await new Promise(requestAnimationFrame);
+            return { count, restored: Number(viewer.canvas.parentNode.querySelector('[data-kilens-ratsnest]').dataset.edgeCount) };
+        });
+        assert.equal(remaining.count, 0, 'Routing all airwires clears the overlay');
+        assert.ok(remaining.restored > 0, 'Removing routes restores airwires');
+        assert.equal(errors.length, 0, errors.join('\n'));
+        console.log('Browser: pixels, toggle, pan/zoom/flip/resize, route connection and disconnection passed.');
+    } finally { await browser.close(); }
+})().catch(error => { console.error(error); process.exitCode = 1; });
