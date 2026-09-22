@@ -10,17 +10,21 @@
         viewer.canvas.parentNode.appendChild(canvas);
         const context = canvas.getContext('2d');
         let analysis = connectivity.analyze(viewer.board);
-        const control = document.createElement('div');
+        const control = document.createElement('label');
         control.className = 'net-display-control';
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
+        const toggle = document.createElement('input');
+        toggle.type = 'checkbox';
         toggle.name = 'ratsnest-visible';
-        toggle.className = 'airwires-toggle';
+        const caption = document.createElement('span');
+        caption.textContent = 'All nets';
         const status = document.createElement('span');
         status.className = 'net-count';
-        control.append(toggle, status);
+        control.append(toggle, caption, status);
         const group = document.createElement('div');
         group.className = 'net-display-controls';
+        const heading = document.createElement('h3');
+        heading.className = 'net-panel-title';
+        heading.textContent = 'Net visibility';
         const hiddenNets = new Set(options.hiddenNets ?? []);
         const netNames = new Map((viewer.board.nets ?? []).filter(net => net.number > 0 && net.name).map(net => [net.number, net.name]));
         for (const footprint of viewer.board.footprints ?? []) {
@@ -69,6 +73,7 @@
         }
         if (!netControls.length) list.textContent = 'No nets found';
         group.append(control, list);
+        (options.container ?? document.body).appendChild(heading);
         (options.container ?? document.body).appendChild(group);
         function updateListOverflow() {
             // Flex layout can introduce a one-pixel rounding difference, which
@@ -80,17 +85,22 @@
         if (typeof ResizeObserver !== 'undefined') new ResizeObserver(updateListOverflow).observe(list);
         function visibleEdges() { return analysis.edges.filter(edge => !hiddenNets.has(nameFor(edge.net))); }
         function updateStatus() {
-            toggle.textContent = 'Airwire';
-            const allSelected = hiddenNets.size === 0;
-            toggle.setAttribute('aria-pressed', String(allSelected));
+            const visibleCount = visibleEdges().length;
+            const edgeCounts = new Map();
+            for (const edge of analysis.edges) edgeCounts.set(edge.net, (edgeCounts.get(edge.net) ?? 0) + 1);
+            const selectedCount = netControls.filter(({ input }) => input.checked).length;
+            const allSelected = netControls.length > 0 && selectedCount === netControls.length;
+            toggle.checked = allSelected;
+            toggle.indeterminate = selectedCount > 0 && !allSelected;
+            toggle.disabled = netControls.length === 0;
             toggle.title = allSelected ? 'Deselect all nets' : 'Select all nets';
-            status.textContent = visibleEdges().length + ' / ' + analysis.edges.length;
+            status.textContent = visibleCount + ' / ' + analysis.edges.length;
             control.title = analysis.padCount + ' pads, ' + analysis.netCount + ' nets. Connected airwires are hidden. '
                 + analysis.warnings.join('; ');
             canvas.dataset.edgeCount = String(analysis.edges.length);
-            canvas.dataset.visibleEdgeCount = String(visibleEdges().length);
+            canvas.dataset.visibleEdgeCount = String(visibleCount);
             for (const { number, count } of netControls) {
-                const n = analysis.edges.filter(edge => edge.net === number).length;
+                const n = edgeCounts.get(number) ?? 0;
                 count.textContent = String(n);
                 count.title = n + ' unconnected airwires';
             }
@@ -104,11 +114,12 @@
             if (canvas.height !== Math.round(height * ratio)) canvas.height = Math.round(height * ratio);
             context.setTransform(ratio, 0, 0, ratio, 0, 0);
             context.clearRect(0, 0, width, height);
-            if (!visibleEdges().length) return;
+            const edges = visibleEdges();
+            if (!edges.length) return;
             context.strokeStyle = 'rgba(180,235,245,0.9)';
             context.lineWidth = 1.25;
             context.beginPath();
-            for (const edge of visibleEdges()) {
+            for (const edge of edges) {
                 const a = viewer.viewport.camera.world_to_screen(edge.start);
                 const b = viewer.viewport.camera.world_to_screen(edge.end);
                 context.moveTo(a.x, a.y);
@@ -129,8 +140,8 @@
             updateStatus();
             return result;
         };
-        toggle.addEventListener('click', () => {
-            const visible = hiddenNets.size > 0;
+        toggle.addEventListener('change', () => {
+            const visible = toggle.checked;
             hiddenNets.clear();
             if (!visible) {
                 for (const edge of analysis.edges) hiddenNets.add(nameFor(edge.net));

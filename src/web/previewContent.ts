@@ -10,7 +10,7 @@ export function getWebviewContent(
 	const isSchematic = documentPath.endsWith('.kicad_sch');
 	const scriptUri = webviewPanel.webview.asWebviewUri(
 		vscode.Uri.joinPath(extensionUri, 'media', 'kicanvas.js')
-	).with({ query: 'v=kicanvas-copper-opacity-75-v1' });
+	).with({ query: 'v=kicanvas-cleanup-v1' });
 
 	const previewText = documentPath.endsWith('.kicad_pcb')
 		? normalizePreviewNets(document.getText()) : document.getText();
@@ -28,238 +28,7 @@ export function getWebviewContent(
 	return `<!DOCTYPE html>
 		<html>
 		<head>
-			<style>
-				html,
-				body {
-					height: 100%;
-					width: 100%;
-					margin: 0;
-					overflow: hidden;
-					padding: 0;
-				}
-
-				kicanvas-embed {
-					aspect-ratio: auto;
-					height: 100%;
-					max-height: none;
-					max-width: none;
-					width: 100%;
-				}
-
-				.refresh-button {
-					align-items: center;
-					appearance: none;
-					background: #6b5194;
-					border: 0;
-					border-radius: 4px;
-					box-sizing: border-box;
-					color: #ffffff;
-					cursor: pointer;
-					display: flex;
-					height: 34px;
-					justify-content: center;
-					line-height: 0;
-					padding: 0;
-					position: fixed;
-					right: ${isSchematic ? 46 : 84}px;
-					top: 8px;
-					width: 34px;
-					z-index: 10;
-				}
-
-				.refresh-button:hover {
-					background: #765da2;
-				}
-
-				.refresh-button:focus-visible {
-					outline: 2px solid #ffffff;
-					outline-offset: 2px;
-				}
-
-				.refresh-button svg {
-					height: 16px;
-					width: 16px;
-				}
-
-				.pcb-display-controls {
-					backdrop-filter: blur(8px);
-					background: rgba(38, 38, 38, 0.88);
-					border: 1px solid rgba(255, 255, 255, 0.14);
-					border-radius: 5px;
-					color: #ffffff;
-					display: flex;
-					flex-direction: column;
-					box-sizing: border-box;
-					max-height: calc(100dvh - 50px);
-					font: 11px/1.2 system-ui, sans-serif;
-					gap: 7px;
-					padding: 8px 10px;
-					position: fixed;
-					right: 8px;
-					top: 50px;
-					width: 260px;
-					max-width: calc(100vw - 16px);
-					z-index: 10;
-				}
-
-				.net-display-controls {
-					display: flex;
-					flex-direction: column;
-					min-height: 0;
-					gap: 9px;
-				}
-				.net-display-control {
-					display: flex;
-					flex-shrink: 0;
-					align-items: center;
-					gap: 8px;
-					cursor: pointer;
-				}
-				.net-display-control input {
-					accent-color: #9b7acb;
-					margin: 0;
-					width: 13px;
-					height: 13px;
-				}
-				.net-display-control .net-count {
-					margin-left: auto;
-					color: #d4c4eb;
-					font-variant-numeric: tabular-nums;
-				}
-				.airwires-toggle {
-					background: #8b69b2;
-					color: #fff;
-					border: 0;
-					border-radius: 3px;
-					padding: 3px 7px;
-					font: inherit;
-					cursor: pointer;
-				}
-				.airwires-toggle[aria-pressed="false"] { background: #38343e; color: #c9c9c9; }
-				.airwires-toggle[aria-pressed="true"]:hover { background: #9b7acb; }
-				.airwires-toggle[aria-pressed="false"]:hover { background: #48414f; }
-				.airwires-toggle:focus-visible { outline: 2px solid #c5a6ed; outline-offset: 2px; }
-				.net-list { display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-y: hidden; }
-				.net-list.needs-scroll { overflow-y: auto; }
-				.net-list input { flex-shrink: 0; }
-				.net-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-				@media (max-height: 480px) {
-					.pcb-display-controls {
-						font-size: 9px;
-						line-height: 1.1;
-						padding: 4px 6px;
-					}
-					.net-display-controls { gap: 4px; }
-					.net-list { gap: 2px; }
-					.net-display-control { gap: 5px; }
-					.net-display-control input {
-						width: 12px;
-						height: 12px;
-					}
-					.airwires-toggle { padding: 2px 5px; }
-				}
-
-				.placement-editor {
-					backdrop-filter: blur(8px);
-					background: rgba(38, 38, 38, 0.92);
-					border: 1px solid rgba(255, 255, 255, 0.14);
-					border-radius: 5px;
-					color: #ffffff;
-					display: none;
-					font: 12px/1.3 system-ui, sans-serif;
-					left: 8px;
-					padding: 10px;
-					position: fixed;
-					top: 8px;
-					width: 230px;
-					z-index: 10;
-				}
-
-				.placement-editor.visible {
-					display: grid;
-					gap: 8px;
-				}
-
-				.placement-editor-title {
-					font-weight: 600;
-					overflow: hidden;
-					text-overflow: ellipsis;
-					white-space: nowrap;
-				}
-
-				.placement-fields {
-					display: grid;
-					gap: 6px;
-					grid-template-columns: repeat(3, 1fr);
-				}
-
-				.placement-field {
-					display: grid;
-					gap: 3px;
-				}
-
-				.placement-field input {
-					background: #1f1f1f;
-					border: 1px solid #666666;
-					border-radius: 3px;
-					box-sizing: border-box;
-					color: #ffffff;
-					min-width: 0;
-					padding: 4px;
-					width: 100%;
-				}
-
-				.placement-actions {
-					display: grid;
-					gap: 6px;
-					grid-template-columns: 1fr;
-				}
-
-				.placement-actions button {
-					background: #5c477c;
-					border: 0;
-					border-radius: 3px;
-					color: #ffffff;
-					cursor: pointer;
-					padding: 5px;
-				}
-
-				.placement-actions button:hover {
-					background: #765da2;
-				}
-
-				.placement-actions button:disabled,
-				.placement-field input:disabled {
-					cursor: not-allowed;
-					opacity: 0.55;
-				}
-
-				.placement-grid {
-					align-items: center;
-					display: grid;
-					gap: 6px;
-					grid-template-columns: auto 70px 1fr;
-				}
-
-				.placement-grid input {
-					background: #1f1f1f;
-					border: 1px solid #666666;
-					border-radius: 3px;
-					color: #ffffff;
-					min-width: 0;
-					padding: 3px 4px;
-				}
-
-				.placement-status {
-					color: #c9c9c9;
-					font-size: 11px;
-				}
-
-				.placement-status.error {
-					color: #ff9b9b;
-				}
-			</style>
+			<link rel="stylesheet" href="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'theme.css')).with({ query: 'v=3' })}">
 		</head>
 		<body>
 			<form class="placement-editor" aria-label="Footprint placement editor">
@@ -281,14 +50,18 @@ export function getWebviewContent(
 				<div class="placement-actions">
 					<button name="apply-placement" type="submit">Apply</button>
 				</div>
-				<label class="placement-grid">
-					<span>Grid</span>
-					<input name="placement-grid" type="number" min="0.000001" step="any">
-					<span>mm</span>
-				</label>
 				<div class="placement-status" role="status"></div>
 			</form>
-			${isSchematic ? '' : `<div class="pcb-display-controls" aria-label="PCB display settings">
+			${isSchematic ? '' : `<button class="refresh-button net-toolbar-button" type="button" title="Net" aria-label="Net" aria-expanded="false" aria-controls="net-panel">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M5 12h6M18 5h-7v14h7"></path>
+					<circle cx="3" cy="12" r="2"></circle>
+					<circle cx="20" cy="5" r="2"></circle>
+					<circle cx="20" cy="19" r="2"></circle>
+					<circle cx="11" cy="12" r="1.6" fill="currentColor" stroke="none"></circle>
+				</svg>
+			</button>
+			<div id="net-panel" class="pcb-display-controls" aria-label="Net visibility" hidden>
 			</div>`}
 			<button class="refresh-button" type="button" title="Refresh Preview" aria-label="Refresh Preview">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -297,9 +70,10 @@ export function getWebviewContent(
 				</svg>
 			</button>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'connectivity.js')).with({ query: 'v=5' })}"></script>
-			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'ratsnest.js')).with({ query: 'v=7' })}"></script>
+			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'ratsnest.js')).with({ query: 'v=9' })}"></script>
+			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'selection.js')).with({ query: 'v=5' })}"></script>
 			<script type="module" src="${scriptUri}"></script>
-			<kicanvas-embed theme="kicad" controls="basic" controlslist="nooverlay">
+			<kicanvas-embed theme="kicad" controls="basic" controlslist="nooverlay noflipview nodownload">
 				<kicanvas-source name="${documentName}">${documentSource}</kicanvas-source>
 			</kicanvas-embed>
 			<script>
@@ -319,26 +93,28 @@ export function getWebviewContent(
 				const placementX = placementEditor?.querySelector('input[name="placement-x"]');
 				const placementY = placementEditor?.querySelector('input[name="placement-y"]');
 				const placementRotation = placementEditor?.querySelector('input[name="placement-rotation"]');
-				const placementGrid = placementEditor?.querySelector('input[name="placement-grid"]');
 				const placementButtons = Array.from(placementEditor?.querySelectorAll('button') ?? []);
 
-				document.querySelector('.refresh-button')?.addEventListener('click', () => {
+				document.querySelector('.refresh-button:not(.net-toolbar-button)')?.addEventListener('click', () => {
 					vscode.postMessage({ type: 'refresh' });
 				});
-
-				if (placementGrid instanceof HTMLInputElement) {
-					const savedGrid = finiteNumber(savedState.placementGrid);
-					placementGrid.value = String(savedGrid !== null && savedGrid > 0 ? savedGrid : 0.5);
-					placementGrid.addEventListener('change', () => {
-						const grid = finiteNumber(placementGrid.value);
-						if (grid !== null && grid > 0) {
-							setPersistentState({ placementGrid: grid });
-							setPlacementStatus('');
-						} else {
-							setPlacementStatus('Grid must be greater than zero.', true);
-						}
-					});
+				const netButton = document.querySelector('.net-toolbar-button');
+				const netPanel = document.querySelector('#net-panel');
+				function setNetPanelOpen(open) {
+					if (!netPanel || !netButton) return;
+					netPanel.hidden = !open;
+					netButton.setAttribute('aria-expanded', String(open));
 				}
+				netButton?.addEventListener('click', () => setNetPanelOpen(netPanel.hidden));
+				document.addEventListener('pointerdown', event => {
+					if (!event.composedPath().includes(netButton) && !event.composedPath().includes(netPanel)) setNetPanelOpen(false);
+				});
+				document.addEventListener('keydown', event => {
+					if (event.key === 'Escape' && netPanel && !netPanel.hidden) {
+						setNetPanelOpen(false);
+						netButton.focus();
+					}
+				});
 
 				placementEditor?.addEventListener('submit', event => {
 					event.preventDefault();
@@ -431,7 +207,7 @@ export function getWebviewContent(
 				}
 
 				function showSelectedFootprint(item) {
-					const id = item?.unique_id ?? item?.uuid ?? item?.tstamp;
+					const id = item?.constructor?.name === 'Footprint' ? (item.unique_id ?? item.uuid ?? item.tstamp) : null;
 					const x = finiteNumber(item?.at?.position?.x);
 					const y = finiteNumber(item?.at?.position?.y);
 					const rotation = finiteNumber(item?.at?.rotation ?? 0);
@@ -507,30 +283,6 @@ export function getWebviewContent(
 					);
 				}
 
-				function nudgeSelectedFootprint(key, multiplier) {
-					if (!selectedFootprint) {
-						return;
-					}
-					const grid = finiteNumber(placementGrid?.value);
-					if (grid === null || grid <= 0) {
-						setPlacementStatus('Grid must be greater than zero.', true);
-						return;
-					}
-					let x = selectedFootprint.x;
-					let y = selectedFootprint.y;
-					const distance = grid * multiplier;
-					if (key === 'ArrowLeft') {
-						x -= distance;
-					} else if (key === 'ArrowRight') {
-						x += distance;
-					} else if (key === 'ArrowUp') {
-						y -= distance;
-					} else if (key === 'ArrowDown') {
-						y += distance;
-					}
-					submitFootprintPlacement(x, y, selectedFootprint.rotation);
-				}
-
 				async function setupViewerState() {
 					const startedAt = Date.now();
 					let viewer = null;
@@ -545,20 +297,6 @@ export function getWebviewContent(
 						return;
 					}
 
-					if (isSchematicDocument) {
-						const download = getViewerApp()?.shadowRoot?.querySelector('kc-ui-button[name="download"]');
-						const refresh = document.querySelector('.refresh-button');
-						if (download && refresh) {
-							const alignButtons = () => {
-								const rect = download.getBoundingClientRect();
-								refresh.style.right = (window.innerWidth - rect.left + 4) + 'px';
-								refresh.style.top = rect.top + 'px';
-							};
-							new ResizeObserver(alignButtons).observe(download);
-							window.addEventListener('resize', alignButtons);
-							alignButtons();
-						}
-					}
 					await setupSchematicZoomControl();
 					if (!restoreViewerState(viewer)) {
 						await applyZoomMode(isSchematicDocument
@@ -577,6 +315,8 @@ export function getWebviewContent(
 					viewer.addEventListener('kicanvas:select', event => {
 						showSelectedFootprint(event.detail?.item);
 					});
+					KiLensSelection.install(viewer, savedState.selectionFilter,
+						selectionFilter => setPersistentState({ selectionFilter }));
 					if (savedState.selectedFootprintId) {
 						viewer.select?.(savedState.selectedFootprintId);
 					}
@@ -755,9 +495,6 @@ export function getWebviewContent(
 					if (event.code === 'KeyR') {
 						event.preventDefault();
 						rotateSelectedFootprint(90);
-					} else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
-						event.preventDefault();
-						nudgeSelectedFootprint(event.key, event.shiftKey ? 10 : 1);
 					}
 				});
 

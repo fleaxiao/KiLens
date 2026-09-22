@@ -54,7 +54,8 @@ const viewer = { board, canvas: { clientWidth: 300, clientHeight: 200, parentNod
 install(viewer, true, value => { persisted = value; });
 assert.equal(strokes, 1);
 assert.equal(nodes[0].width, 600);
-nodes[2].click();
+nodes[2].checked = false;
+nodes[2].change();
 assert.equal(persisted, false);
 assert.equal(strokes, 1);
 console.log('Ratsnest geometry and overlay checks passed.');
