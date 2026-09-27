@@ -28,7 +28,7 @@ export function getWebviewContent(
 	return `<!DOCTYPE html>
 		<html>
 		<head>
-			<link rel="stylesheet" href="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'theme.css')).with({ query: 'v=3' })}">
+			<link rel="stylesheet" href="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'theme.css')).with({ query: 'v=5' })}">
 		</head>
 		<body>
 			<form class="placement-editor" aria-label="Footprint placement editor">
@@ -69,6 +69,11 @@ export function getWebviewContent(
 					<path d="M20 4v7h-7"></path>
 				</svg>
 			</button>
+			${isSchematic ? '' : `<button class="refresh-button copper-toolbar-button" type="button" title="铜层交替：F.Cu / B.Cu" aria-label="铜层交替" aria-pressed="false" disabled>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M4 5h16M4 19h16M9 15V9l-2 2m2-2 2 2M15 9v6l-2-2m2 2 2-2"></path>
+				</svg>
+			</button>`}
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'connectivity.js')).with({ query: 'v=5' })}"></script>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'ratsnest.js')).with({ query: 'v=9' })}"></script>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'selection.js')).with({ query: 'v=5' })}"></script>
@@ -129,6 +134,49 @@ export function getWebviewContent(
 				function setPersistentState(patch) {
 					savedState = { ...savedState, ...patch };
 					vscode.setState(savedState);
+				}
+
+				function setupCopperOrder(viewer) {
+					const button = document.querySelector('.copper-toolbar-button');
+					if (!button) return;
+					let swapped = savedState.copperOrderSwapped === true;
+					function wrapLayers(layers) {
+						const original = layers.in_display_order;
+						layers.in_display_order = function* () {
+							const ordered = [...original.call(this)];
+							if (swapped) {
+								for (const [front, back] of [
+									['F.Cu', 'B.Cu'],
+									[':F.Cu:Zones', ':B.Cu:Zones'],
+									[':Pads:Front', ':Pads:Back'],
+									[':Pads:Front:NetName', ':Pads:Back:NetName']
+								]) {
+									const a = ordered.findIndex(layer => layer.name === front);
+									const b = ordered.findIndex(layer => layer.name === back);
+									if (a >= 0 && b >= 0) [ordered[a], ordered[b]] = [ordered[b], ordered[a]];
+								}
+							}
+							yield* ordered;
+						};
+						return layers;
+					}
+					const createLayers = viewer.create_layer_set;
+					viewer.create_layer_set = function (...args) {
+						return wrapLayers(createLayers.apply(this, args));
+					};
+					wrapLayers(viewer.layers);
+					function update() {
+						button.setAttribute('aria-pressed', String(swapped));
+						button.title = '铜层交替：' + (swapped ? 'B.Cu' : 'F.Cu') + ' 在上，点击互换';
+						viewer.draw();
+					}
+					button.disabled = false;
+					button.addEventListener('click', () => {
+						swapped = !swapped;
+						setPersistentState({ copperOrderSwapped: swapped });
+						update();
+					});
+					update();
 				}
 
 				function finiteNumber(value) {
@@ -306,6 +354,7 @@ export function getWebviewContent(
 					if (!viewer.board) {
 						return;
 					}
+					setupCopperOrder(viewer);
 					KiLensRatsnest.install(viewer, savedState.ratsnestVisible !== false,
 						visible => setPersistentState({ ratsnestVisible: visible }), {
 							container: document.querySelector('.pcb-display-controls'),

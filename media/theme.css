@@ -10,6 +10,10 @@
     --kilens-input: #0a2119;
     --kilens-muted: #aec3b6;
     --kilens-text: #f2f5eb;
+    --kilens-toolbar-bg: #0c1f18;
+    --kilens-toolbar-fg: var(--kilens-copper);
+    --kilens-toolbar-hover-bg: var(--kilens-green);
+    --kilens-toolbar-hover-fg: #ffc369;
 }
 
 html,
@@ -32,11 +36,11 @@ kicanvas-embed {
 .refresh-button {
     align-items: center;
     appearance: none;
-    background: var(--kilens-green);
+    background: var(--kilens-toolbar-bg);
     border: 0;
     border-radius: 4px;
     box-sizing: border-box;
-    color: var(--kilens-copper);
+    color: var(--kilens-toolbar-fg);
     cursor: pointer;
     display: flex;
     height: 34px;
@@ -51,7 +55,8 @@ kicanvas-embed {
 }
 
 .refresh-button:hover {
-    background: var(--kilens-green-hover);
+    background: var(--kilens-toolbar-hover-bg);
+    color: var(--kilens-toolbar-hover-fg);
 }
 
 .refresh-button svg {
@@ -62,6 +67,10 @@ kicanvas-embed {
 .net-toolbar-button {
     right: 46px;
 }
+.copper-toolbar-button { right: 122px; }
+.copper-toolbar-button svg { height: 20px; width: 20px; }
+.copper-toolbar-button[aria-pressed="true"] { background: var(--kilens-green-hover); }
+.copper-toolbar-button:disabled { opacity: .5; cursor: default; }
 .pcb-display-controls[hidden] { display: none; }
 .pcb-display-controls {
     display: flex;
@@ -224,10 +233,14 @@ kicanvas-embed {
     --button-outline-hover-bg: var(--kilens-green-hover);
     --button-outline-hover-fg: var(--kilens-copper);
     --button-outline-disabled-bg: #0a2119;
-    --button-toolbar-fg: var(--kilens-copper);
-    --button-toolbar-hover-fg: #ffc369;
-    --button-toolbar-alt-fg: var(--kilens-copper);
-    --button-toolbar-alt-hover-fg: #ffc369;
+    --button-toolbar-bg: var(--kilens-toolbar-bg);
+    --button-toolbar-fg: var(--kilens-toolbar-fg);
+    --button-toolbar-hover-bg: var(--kilens-toolbar-hover-bg);
+    --button-toolbar-hover-fg: var(--kilens-toolbar-hover-fg);
+    --button-toolbar-alt-bg: var(--kilens-green);
+    --button-toolbar-alt-fg: var(--kilens-toolbar-fg);
+    --button-toolbar-alt-hover-bg: var(--kilens-green-hover);
+    --button-toolbar-alt-hover-fg: var(--kilens-toolbar-hover-fg);
     --button-menu-hover-fg: var(--kilens-copper);
     --input-bg: var(--kilens-input);
     --input-border: 1px solid var(--kilens-border);

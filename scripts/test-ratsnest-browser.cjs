@@ -76,6 +76,27 @@ function html(source) {
             checkboxes: document.querySelectorAll('input[type=checkbox]').length
         }))), 'errors:', errors);
         const netButton = page.getByRole('button', { name: 'Net', exact: true });
+        const copperButton = page.getByRole('button', { name: '铜层交替', exact: true });
+        const layerOrder = () => page.evaluate(() => [...getViewer().layers.in_display_order()].map(layer => layer.name));
+        const initialOrder = await layerOrder();
+        await copperButton.click();
+        const swappedOrder = await layerOrder();
+        for (const [front, back] of [
+            ['F.Cu', 'B.Cu'],
+            [':F.Cu:Zones', ':B.Cu:Zones'],
+            [':Pads:Front', ':Pads:Back'],
+            [':Pads:Front:NetName', ':Pads:Back:NetName']
+        ]) {
+            assert.ok(initialOrder.includes(front) && initialOrder.includes(back), 'Both layer sides exist');
+            assert.equal(swappedOrder.indexOf(front), initialOrder.indexOf(back));
+            assert.equal(swappedOrder.indexOf(back), initialOrder.indexOf(front));
+        }
+        assert.equal(await copperButton.getAttribute('aria-pressed'), 'true');
+        assert.equal(await page.evaluate(() => window.savedPreviewState.copperOrderSwapped), true);
+        await page.evaluate(() => { getViewer().paint(); getViewer().draw(); });
+        assert.deepEqual(await layerOrder(), swappedOrder, 'Copper order survives repaint');
+        await copperButton.click();
+        assert.deepEqual(await layerOrder(), initialOrder, 'Second click restores layer order');
         await netButton.waitFor();
         assert.equal(await netButton.locator('svg').count(), 1, 'Net uses a toolbar icon');
         assert.equal(await page.locator('kc-ui-button[name="flip_view"]').count(), 0, 'Flip button is removed');
