@@ -2,7 +2,7 @@
 	"name": "kilens",
 	"displayName": "KiLens",
 	"description": "KiCad schematic and PCB files Preview",
-	"version": "1.0.2",
+	"version": "1.1.0",
 	"publisher": "fleaxiao",
 	"license": "MIT",
 	"icon": "icon.png",
@@ -35,6 +35,7 @@
 		"onCommand:kilens.refresh"
 	],
 	"browser": "./dist/web/extension.js",
+	"main": "./dist/node/extension.js",
 	"contributes": {
 		"languages": [
 			{
@@ -95,6 +96,14 @@
 				"command": "kilens.refresh",
 				"title": "Refresh Preview",
 				"icon": "$(refresh)"
+			},
+			{
+				"command": "kilens.show2d",
+				"title": "KiLens: Show 2D Preview"
+			},
+			{
+				"command": "kilens.show3d",
+				"title": "KiLens: Show 3D Preview"
 			}
 		],
 		"customEditors": [
@@ -119,22 +128,56 @@
 					"group": "navigation"
 				}
 			]
-		}
+		},
+		"configuration": {
+			"title": "KiLens",
+			"properties": {
+				"kilens.modelSearchPaths": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"scope": "resource",
+					"description": "Directories containing KiCad *.3dshapes folders or local STEP/WRL models. Used in trusted workspaces."
+				},
+				"kilens.modelPathVariables": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "string"
+					},
+					"default": {},
+					"scope": "resource",
+					"description": "Map KiCad model path variables (for example KICAD9_3DMODEL_DIR) to local folders. Used in trusted workspaces."
+				}
+			}
+		},
+		"keybindings": [
+			{
+				"command": "kilens.show3d",
+				"key": "alt+3",
+				"when": "activeCustomEditorId == kilens.preview"
+			}
+		]
 	},
 	"scripts": {
 		"test": "vscode-test-web --browserType=chromium --extensionDevelopmentPath=. --extensionTestsPath=dist/web/test/suite/index.js",
 		"pretest": "npm run compile-web",
 		"vscode:prepublish": "npm run package-web",
-		"compile-web": "webpack",
+		"compile-web": "node scripts/bundle-3d.cjs && webpack",
 		"test-ratsnest": "node scripts/test-preview-nets.cjs && node scripts/test-ratsnest.cjs && node scripts/test-ratsnest-browser.cjs",
 		"patch-kicanvas": "node scripts/patch-kicanvas-rounded-rect.cjs && node scripts/patch-kicanvas-front-component-order.cjs && node scripts/patch-kicanvas-copper-opacity.cjs",
-		"watch-web": "webpack --watch",
-		"package-web": "webpack --env extensionOnly --mode production --devtool hidden-source-map",
-		"lint": "eslint",
+		"watch-web": "node scripts/bundle-3d.cjs && webpack --watch",
+		"package-web": "node scripts/bundle-3d.cjs && webpack --env extensionOnly --mode production --devtool hidden-source-map",
 		"package": "vsce package",
-		"publish": "vsce publish"
+		"publish": "vsce publish",
+		"test-3d": "node scripts/test-3d.cjs",
+		"typecheck": "tsc --noEmit",
+		"test-shortcuts": "node scripts/test-shortcuts-vscode.cjs",
+		"check": "npm run typecheck && npm run test-ratsnest && npm run test-3d"
 	},
 	"files": [
+		"dist/node/extension.js",
 		"dist/web/extension.js",
 		"media",
 		"icon.png",
@@ -143,22 +186,21 @@
 		"NOTICE"
 	],
 	"devDependencies": {
-		"@eslint/js": "^9.13.0",
-		"@stylistic/eslint-plugin": "^2.9.0",
 		"@types/mocha": "^10.0.10",
 		"@types/node": "^26.1.1",
+		"@types/three": "^0.180.0",
 		"@types/vscode": "^1.73.0",
 		"@types/webpack-env": "^1.16.2",
 		"@vscode/test-web": "^0.0.81",
 		"@vscode/vsce": "^3.9.2",
 		"assert": "^2.0.0",
-		"eslint": "^9.13.0",
 		"mocha": "^11.7.6",
+		"occt-import-js": "^0.0.23",
 		"path-browserify": "^1.0.1",
 		"process": "^0.11.10",
+		"three": "^0.180.0",
 		"ts-loader": "^9.2.5",
 		"typescript": "^5.7.2",
-		"typescript-eslint": "^8.16.0",
 		"webpack": "^5.52.1",
 		"webpack-cli": "^4.8.0"
 	},

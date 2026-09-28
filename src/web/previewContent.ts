@@ -10,7 +10,7 @@ export function getWebviewContent(
 	const isSchematic = documentPath.endsWith('.kicad_sch');
 	const scriptUri = webviewPanel.webview.asWebviewUri(
 		vscode.Uri.joinPath(extensionUri, 'media', 'kicanvas.js')
-	).with({ query: 'v=kicanvas-cleanup-v1' });
+	).with({ query: 'v=kicanvas-silktext-v1' });
 
 	const previewText = documentPath.endsWith('.kicad_pcb')
 		? normalizePreviewNets(document.getText()) : document.getText();
@@ -74,6 +74,22 @@ export function getWebviewContent(
 					<path d="M4 5h16M4 19h16M9 15V9l-2 2m2-2 2 2M15 9v6l-2-2m2 2 2-2"></path>
 				</svg>
 			</button>`}
+			${isSchematic ? '' : `<button class="refresh-button three-toolbar-button" type="button" title="3D Preview (Alt+3)" aria-label="3D Preview" aria-keyshortcuts="Alt+3" aria-pressed="false">3D</button>
+			<section class="three-panel" aria-label="3D PCB preview" hidden>
+				<div class="three-viewport"></div>
+				<div class="three-controls">
+					<button type="button" data-three-view="iso">Fit</button>
+					<button type="button" data-three-view="top">Top</button>
+					<button type="button" data-three-view="bottom">Bottom</button>
+					<label><input type="checkbox" name="three-models" checked> Components</label>
+					<label><input type="checkbox" name="three-silkscreen" checked> Silkscreen</label>
+				</div>
+				<button type="button" class="refresh-button three-close" title="Back to 2D (Esc)" aria-label="2D" aria-keyshortcuts="Escape">2D</button>
+				<div class="three-message"><div class="three-status" role="status">Loading 3D preview…</div>
+				<pre class="three-details" hidden></pre>
+				<div class="three-help">Drag: rotate · Right-drag: pan · Scroll: zoom · Alt+3: 3D · Esc: 2D</div></div>
+			</section>
+			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'preview3d-controls.js')).with({ query: 'v=shortcuts-4' })}"></script>`}
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'connectivity.js')).with({ query: 'v=5' })}"></script>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'ratsnest.js')).with({ query: 'v=9' })}"></script>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'selection.js')).with({ query: 'v=5' })}"></script>
@@ -100,7 +116,7 @@ export function getWebviewContent(
 				const placementRotation = placementEditor?.querySelector('input[name="placement-rotation"]');
 				const placementButtons = Array.from(placementEditor?.querySelectorAll('button') ?? []);
 
-				document.querySelector('.refresh-button:not(.net-toolbar-button)')?.addEventListener('click', () => {
+				document.querySelector('.refresh-button[aria-label="Refresh Preview"]')?.addEventListener('click', () => {
 					vscode.postMessage({ type: 'refresh' });
 				});
 				const netButton = document.querySelector('.net-toolbar-button');
@@ -135,6 +151,13 @@ export function getWebviewContent(
 					savedState = { ...savedState, ...patch };
 					vscode.setState(savedState);
 				}
+
+				if (!isSchematicDocument) KiLens3DControls.install({
+					vscode, savedState, persist: setPersistentState,
+					bundleUrl: '${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', '3d', 'preview3d.js'))}',
+					workerUrl: '${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', '3d', 'step-worker.js'))}',
+					wasmUrl: '${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', '3d', 'occt-import-js.wasm'))}'
+				});
 
 				function setupCopperOrder(viewer) {
 					const button = document.querySelector('.copper-toolbar-button');

@@ -2003,3 +2003,21 @@ void main() {
         rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@48,400,0,0&family=Nunito:wght@300;400;500;600;700&display=swap"
         crossorigin="anonymous" />`);
+
+// KiLens: expose the bundled Newstroke font for 3D silkscreen.
+globalThis.KiLensStrokeText = options => {
+    const attributes = new Jt();
+    attributes.size = new d(options.size[0] * 10000, options.size[1] * 10000);
+    attributes.stroke_width = options.width * 10000;
+    attributes.h_align = options.horizontal;
+    attributes.v_align = options.vertical;
+    attributes.angle = W.from_degrees(options.angle);
+    attributes.mirrored = options.mirror;
+    attributes.italic = options.italic;
+    attributes.bold = options.bold;
+    attributes.line_spacing = options.lineSpacing;
+    const strokes = [];
+    Q.default().draw({ state: {}, line: line => strokes.push(line.points.map(p => [p.x, p.y])) },
+        options.text, new d(options.position[0] * 10000, options.position[1] * 10000), attributes);
+    return strokes;
+};

@@ -45,3 +45,30 @@ any later version. The license text is included in LICENSE.KICAD-ICONS.
 
 Upstream source:
 https://gitlab.com/kicad/code/kicad/-/tree/master/resources/linux/icons/hicolor/scalable/mimetypes
+
+3D preview
+----------
+
+The KiCanvas bundle includes a KiLens adapter exposing its existing Newstroke
+font to the 3D silkscreen renderer. Reproduced by
+scripts/patch-kicanvas-stroke-text.cjs; the original font data is unchanged.
+
+Three.js 0.180.0 (including OrbitControls and VRMLLoader), MIT license.
+Copyright (c) 2010-2025 three.js authors. See media/3d/LICENSE.three.
+Source: https://github.com/mrdoob/three.js/tree/r180
+
+The VRMLLoader includes Chevrotain 9.0.1, Apache License 2.0.
+See media/3d/LICENSE.chevrotain.
+Source: https://github.com/Chevrotain/chevrotain/tree/v9.0.1
+
+occt-import-js 0.0.23 by Viktor Kovacs, GNU LGPL 2.1.
+See media/3d/LICENSE.occt-import-js.
+Source and build instructions: https://github.com/kovacsv/occt-import-js/tree/0.0.23
+The packaged importer is unmodified; scripts/step-worker.js adds the KiLens
+message handler. The JavaScript and WebAssembly are separately replaceable in
+media/3d/. scripts/bundle-3d.cjs reproduces these files from the npm package.
+
+The importer uses Open CASCADE Technology 7.6.1, GNU LGPL 2.1 with the
+Open CASCADE exception. Copyright (c) Open CASCADE SAS.
+See media/3d/OCCT_LGPL_EXCEPTION.txt.
+Source: https://github.com/Open-Cascade-SAS/OCCT/tree/V7_6_1

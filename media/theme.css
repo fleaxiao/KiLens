@@ -65,9 +65,9 @@ kicanvas-embed {
 }
 
 .net-toolbar-button {
-    right: 46px;
+    right: 84px;
 }
-.copper-toolbar-button { right: 122px; }
+.copper-toolbar-button { right: 160px; }
 .copper-toolbar-button svg { height: 20px; width: 20px; }
 .copper-toolbar-button[aria-pressed="true"] { background: var(--kilens-green-hover); }
 .copper-toolbar-button:disabled { opacity: .5; cursor: default; }
@@ -284,4 +284,26 @@ kicanvas-embed {
 .object-picker {padding:5px;max-height:220px;overflow:auto;max-width:280px}
 .object-picker button {display:block;width:100%;text-align:left;border:0;border-radius:3px;background:transparent;color:inherit;padding:6px 9px;cursor:pointer}
 .object-picker button:hover,.object-picker button:focus {background:var(--kilens-green)}
-.filter-toolbar-button { right: 84px; }
+.filter-toolbar-button { right: 122px; }
+
+.three-toolbar-button { right: 46px; font: 600 12px system-ui, sans-serif; }
+.three-toolbar-button[aria-pressed="true"] { background: var(--kilens-copper); color: var(--kilens-ink); }
+.three-panel { position: fixed; inset: 0; z-index: 20; background: #101d23; color: var(--kilens-text); font: 12px/1.5 system-ui, sans-serif; }
+.three-panel[hidden] { display: none; }
+.three-viewport { position: absolute; inset: 0; }
+.three-viewport canvas { display: block; touch-action: none; }
+.three-controls { position: absolute; top: 8px; left: 8px; right: 86px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.three-close { right: 46px; font: 600 12px system-ui, sans-serif; }
+.three-controls button { border: 1px solid var(--kilens-border); border-radius: 4px; background: var(--kilens-panel); color: var(--kilens-text); padding: 6px 10px; cursor: pointer; }
+.three-controls button:hover { background: var(--kilens-green); }
+.three-controls label { background: var(--kilens-panel); border-radius: 4px; padding: 5px 8px; }
+.three-controls input { accent-color: var(--kilens-copper); vertical-align: middle; }
+.three-controls button:focus-visible { outline: 2px solid var(--kilens-copper); outline-offset: 2px; }
+.three-message { position: absolute; bottom: 8px; left: 8px; right: 8px; pointer-events: none; }
+.three-status,.three-help { width: fit-content; max-width: 100%; overflow-wrap: anywhere; background: var(--kilens-panel); padding: 3px 8px; border-radius: 3px; }
+.three-help { color: var(--kilens-muted); margin-top: 3px; }
+.three-details { pointer-events: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 25vh; overflow: auto; background: var(--kilens-panel); color: #ffc369; padding: 8px; margin: 4px 0; font: inherit; }
+.three-active kicanvas-embed { visibility: hidden; pointer-events: none; }
+.three-active .placement-editor,.three-active .pcb-display-controls,.three-active .selection-filter,.three-active .object-info,.three-active .object-picker,
+.three-active .net-toolbar-button,.three-active .filter-toolbar-button,.three-active .copper-toolbar-button,.three-active .three-toolbar-button { display: none !important; }
+.three-active .refresh-button[aria-label="Refresh Preview"] { z-index: 21; }

@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import { createFootprintPlacementReplacement } from './kicadPcbEditor';
 import { getWebviewContent } from './previewContent';
+import { readModel } from './modelResolver';
 
 class PreviewProvider implements vscode.CustomTextEditorProvider {
 	private readonly refreshCallbacks = new Set<() => void>();
+	private readonly pcbPanels = new Set<vscode.WebviewPanel>();
 
 	constructor(private readonly context: vscode.ExtensionContext) { }
 
@@ -11,11 +13,18 @@ class PreviewProvider implements vscode.CustomTextEditorProvider {
 		this.refreshCallbacks.forEach(refresh => refresh());
 	}
 
+	public setPreviewMode(mode: '2d' | '3d'): void {
+		for (const panel of this.pcbPanels) {
+			if (panel.active) void panel.webview.postMessage({ type: 'setPreviewMode', mode });
+		}
+	}
+
 	public async resolveCustomTextEditor(
 		document: vscode.TextDocument,
 		webviewPanel: vscode.WebviewPanel,
 		_token: vscode.CancellationToken
 	): Promise<void> {
+		if (document.uri.path.toLowerCase().endsWith('.kicad_pcb')) this.pcbPanels.add(webviewPanel);
 		webviewPanel.webview.options = {
 			enableScripts: true,
 			enableCommandUris: true,
@@ -39,7 +48,13 @@ class PreviewProvider implements vscode.CustomTextEditorProvider {
 		});
 
 		const messageSubscription = webviewPanel.webview.onDidReceiveMessage(message => {
-			if (message?.type === 'refresh') {
+			if (message?.type === 'load3dModel' && Number.isInteger(message.index) && typeof message.requestId === 'string') {
+				const requestId = message.requestId;
+				void readModel(document, message.index).then(
+					result => webviewPanel.webview.postMessage({ type: 'model3dResult', requestId, ...result }),
+					error => webviewPanel.webview.postMessage({ type: 'model3dResult', requestId, error: String(error.message ?? error) })
+				);
+			} else if (message?.type === 'refresh') {
 				updateWebview();
 			} else if (message?.type === 'editFootprintPlacement') {
 				void this.editFootprintPlacement(document, message).catch(error => {
@@ -54,6 +69,7 @@ class PreviewProvider implements vscode.CustomTextEditorProvider {
 		});
 
 		webviewPanel.onDidDispose(() => {
+			this.pcbPanels.delete(webviewPanel);
 			changeDocumentSubscription.dispose();
 			messageSubscription.dispose();
 			this.refreshCallbacks.delete(updateWebview);
@@ -105,6 +121,8 @@ export function activate(context: vscode.ExtensionContext) {
 			provider,
 			{ webviewOptions: { retainContextWhenHidden: true } }
 		),
-		vscode.commands.registerCommand('kilens.refresh', () => provider.refresh())
+		vscode.commands.registerCommand('kilens.refresh', () => provider.refresh()),
+		vscode.commands.registerCommand('kilens.show2d', () => provider.setPreviewMode('2d')),
+		vscode.commands.registerCommand('kilens.show3d', () => provider.setPreviewMode('3d'))
 	);
 }

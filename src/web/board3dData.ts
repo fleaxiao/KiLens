@@ -1,0 +1,195 @@
+import { List, parseDocument, head, childList } from './kicadPcbEditor';
+
+export type Point = [number, number];
+export const children = (list: List, name?: string): List[] => list.items.filter(
+    (item): item is List => item.kind === 'list' && (!name || head(item) === name));
+export const atom = (list: List | undefined, index = 1): string => {
+    const item = list?.items[index];
+    return item?.kind === 'atom' ? item.value : '';
+};
+const number = (list: List | undefined, index = 1, fallback = 0): number => {
+    const value = atom(list, index);
+    return value !== '' && Number.isFinite(Number(value)) ? Number(value) : fallback;
+};
+const point = (list: List | undefined): Point => [number(list), number(list, 2)];
+const vector = (list: List | undefined, fallback = 0): [number, number, number] => {
+    const xyz = list && childList(list, 'xyz');
+    return [number(xyz, 1, fallback), number(xyz, 2, fallback), number(xyz, 3, fallback)];
+};
+export interface ModelReference {
+    path: string; position: Point; angle: number; back: boolean;
+    offset: [number, number, number]; scale: [number, number, number]; rotation: [number, number, number];
+}
+export function boardRoot(text: string): List {
+    const board = children(parseDocument(text), 'kicad_pcb')[0];
+    if (!board) throw new Error('3D preview requires a KiCad PCB document.');
+    return board;
+}
+export function modelReferences(text: string): ModelReference[] {
+    return children(boardRoot(text)).filter(f => ['footprint', 'module'].includes(head(f) ?? '')).flatMap(f =>
+        children(f, 'model').filter(m => !m.items.some(i => i.kind === 'atom' && i.value === 'hide')
+            && atom(childList(m, 'hide')) !== 'yes').map(m => {
+            const legacyOffset = childList(m, 'at');
+            const offset = vector(childList(m, 'offset') ?? legacyOffset);
+            if (legacyOffset && !childList(m, 'offset')) offset.forEach((v, i) => offset[i] = v * 25.4);
+            return { path: atom(m), position: point(childList(f, 'at')), angle: number(childList(f, 'at'), 3),
+                back: atom(childList(f, 'layer')) === 'B.Cu', offset,
+                scale: vector(childList(m, 'scale'), 1), rotation: vector(childList(m, 'rotate')) };
+        }));
+}
+
+export function arcPoints(a: Point, b: Point, c: Point): Point[] {
+    const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+    if (Math.abs(d) < 1e-9) return [a, c];
+    const sq = (p: Point) => p[0] ** 2 + p[1] ** 2;
+    const x = (sq(a) * (b[1] - c[1]) + sq(b) * (c[1] - a[1]) + sq(c) * (a[1] - b[1])) / d;
+    const y = (sq(a) * (c[0] - b[0]) + sq(b) * (a[0] - c[0]) + sq(c) * (b[0] - a[0])) / d;
+    const angle = (p: Point) => Math.atan2(p[1] - y, p[0] - x);
+    const positive = (v: number) => (v + 2 * Math.PI) % (2 * Math.PI);
+    let sweep = positive(angle(c) - angle(a));
+    if (positive(angle(b) - angle(a)) > sweep) sweep -= 2 * Math.PI;
+    const r = Math.hypot(a[0] - x, a[1] - y);
+    const steps = Math.max(8, Math.ceil(Math.abs(sweep) * 24));
+    return Array.from({ length: steps + 1 }, (_, i) =>
+        [x + r * Math.cos(angle(a) + sweep * i / steps), y + r * Math.sin(angle(a) + sweep * i / steps)]);
+}
+function graphicPoints(item: List): Point[] {
+    const type = head(item)?.replace(/^(gr|fp)_/, '');
+    const a = point(childList(item, 'start')), b = point(childList(item, 'end'));
+    if (type === 'line' || type === 'segment') return [a, b];
+    if (type === 'rect') return [a, [b[0], a[1]], b, [a[0], b[1]], a];
+    if (type === 'arc') {
+        const mid = childList(item, 'mid');
+        if (mid) return arcPoints(a, point(mid), b);
+        const sweep = number(childList(item, 'angle')) * Math.PI / 180;
+        const start = Math.atan2(b[1] - a[1], b[0] - a[0]), r = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const steps = Math.max(8, Math.ceil(Math.abs(sweep) * 24));
+        return Array.from({ length: steps + 1 }, (_, i) => [a[0] + r * Math.cos(start + sweep * i / steps), a[1] + r * Math.sin(start + sweep * i / steps)]);
+    }
+    if (type === 'circle') {
+        const c = point(childList(item, 'center')), r = Math.hypot(b[0] - c[0], b[1] - c[1]);
+        return Array.from({ length: 97 }, (_, i) => [c[0] + r * Math.cos(i * Math.PI / 48), c[1] + r * Math.sin(i * Math.PI / 48)]);
+    }
+    if (type === 'poly') {
+        const pts = childList(item, 'pts');
+        const points = pts ? children(pts, 'xy').map(point) : [];
+        return points.length ? [...points, points[0]] : [];
+    }
+    return [];
+}
+export interface Pad3d { position: Point; size: Point; drill: Point; drillOffset: Point; angle: number; shape: string; ratio: number; front: boolean; back: boolean; }
+export interface SilkText3d {
+    text: string; position: Point; angle: number; size: Point; width: number; back: boolean;
+    horizontal: string; vertical: string; mirror: boolean; italic: boolean; bold: boolean; lineSpacing: number;
+}
+export function parseBoard3d(text: string) {
+    const board = boardRoot(text), outlines: Point[][] = [], pads: Pad3d[] = [];
+    const traces: { points: Point[]; width: number; back: boolean; silk: boolean }[] = [];
+    const warnings = new Set<string>();
+    const silkTexts: SilkText3d[] = [], silkPolygons: { points: Point[]; back: boolean }[] = [];
+    const flag = (list: List | undefined, name: string) => !!list && (list.items.some(i => i.kind === 'atom' && i.value === name)
+        || ['yes', 'true'].includes(atom(childList(list, name))));
+    const transform = (p: Point, at: Point, rotation: number): Point => {
+        const a = -rotation * Math.PI / 180;
+        return [at[0] + p[0] * Math.cos(a) - p[1] * Math.sin(a), at[1] + p[0] * Math.sin(a) + p[1] * Math.cos(a)];
+    };
+    function graphic(item: List, at: Point = [0, 0], angle = 0) {
+        const layer = atom(childList(item, 'layer'));
+        if (!['Edge.Cuts', 'F.Cu', 'B.Cu', 'F.SilkS', 'B.SilkS'].includes(layer)) return;
+        const points = graphicPoints(item).map(p => transform(p, at, angle));
+        if (layer.endsWith('SilkS') && ['solid', 'yes'].includes(atom(childList(item, 'fill'))) && points.length >= 3)
+            silkPolygons.push({ points, back: layer === 'B.SilkS' });
+        if (layer === 'Edge.Cuts') {
+            if (points.length) outlines.push(points);
+            else warnings.add('Unsupported Edge.Cuts geometry was omitted.');
+        } else if (points.length) traces.push({ points, width: number(childList(item, 'width'), 1,
+            number(childList(childList(item, 'stroke') ?? item, 'width'), 1, 0.15)), back: layer.startsWith('B.'), silk: layer.endsWith('SilkS') });
+    }
+    const boardVariables = Object.fromEntries(children(board, 'property').map(p => [atom(p).toUpperCase(), atom(p, 2)]));
+    const title = childList(board, 'title_block');
+    if (title) for (const item of children(title)) boardVariables[(head(item) ?? '').toUpperCase()] = atom(item);
+    function silkText(item: List, at: Point = [0, 0], parentAngle = 0, variables = boardVariables, footprint = false) {
+        const layer = atom(childList(item, 'layer'));
+        if (!['F.SilkS', 'B.SilkS'].includes(layer)) return;
+        const effects = childList(item, 'effects');
+        if (flag(item, 'hide') || flag(effects, 'hide')) return;
+        const font = effects && childList(effects, 'font'), size = font && childList(font, 'size');
+        const justify = effects && childList(effects, 'justify');
+        const raw = atom(item, head(item) === 'gr_text' ? 1 : 2);
+        const value = raw.replace(/\$\{([^}]+)\}/g, (all, name: string) => variables[name.toUpperCase()] ?? all);
+        if (!value.trim()) return;
+        const cache = childList(item, 'render_cache');
+        if (cache && atom(cache) === value) {
+            const polygons = children(cache, 'polygon').flatMap(p => {
+                const pts = childList(p, 'pts');
+                const points = pts ? children(pts, 'xy').map(point) : [];
+                return points.length >= 3 ? [{ points, back: layer === 'B.SilkS' }] : [];
+            });
+            if (polygons.length) { silkPolygons.push(...polygons); return; }
+        }
+        if (atom(font && childList(font, 'face'))) warnings.add('Silkscreen without a saved outline uses the bundled KiCad stroke font.');
+        const position = childList(item, 'at');
+        let angle = number(position, 3);
+        if (footprint && !flag(position, 'unlocked') && !flag(item, 'unlocked')) {
+            angle = ((angle % 360) + 360) % 360;
+            if (angle > 180) angle -= 360;
+            if (angle > 90) angle -= 180;
+            if (angle < -90) angle += 180;
+        }
+        const sx = Math.max(0.01, number(size, 2, 1)), sy = Math.max(0.01, number(size, 1, 1));
+        const bold = flag(font, 'bold');
+        silkTexts.push({ text: value, position: transform(point(position), at, parentAngle), angle,
+            size: [sx, sy], width: Math.min(sx / 4, number(font && childList(font, 'thickness'), 1, sx / (bold ? 5 : 8)) || sx / 8),
+            back: layer === 'B.SilkS', mirror: flag(justify, 'mirror'), italic: flag(font, 'italic'), bold,
+            horizontal: flag(justify, 'left') ? 'left' : flag(justify, 'right') ? 'right' : 'center',
+            vertical: flag(justify, 'top') ? 'top' : flag(justify, 'bottom') ? 'bottom' : 'center',
+            lineSpacing: number(font && childList(font, 'line_spacing'), 1, 1) });
+    }
+    for (const item of children(board)) {
+        if (['footprint', 'module'].includes(head(item) ?? '')) {
+            const at = point(childList(item, 'at')), angle = number(childList(item, 'at'), 3);
+            const variables = { ...boardVariables, ...Object.fromEntries(children(item, 'property').map(p => [atom(p).toUpperCase(), atom(p, 2)])) };
+            for (const field of children(item, 'fp_text')) if (['reference', 'value'].includes(atom(field))) variables[atom(field).toUpperCase()] = atom(field, 2);
+            for (const sub of children(item)) {
+                if (['fp_text', 'property'].includes(head(sub) ?? '')) { silkText(sub, at, angle, variables, true); continue; }
+                if (head(sub) !== 'pad') { if (head(sub)?.startsWith('fp_')) graphic(sub, at, angle); continue; }
+                const drill = childList(sub, 'drill'), oval = atom(drill) === 'oval';
+                const layers = childList(sub, 'layers')?.items.filter(i => i.kind === 'atom').map(i => i.kind === 'atom' ? i.value : '') ?? [];
+                const shape = atom(sub, 3);
+                const plated = atom(sub, 2) !== 'np_thru_hole';
+                if (['custom', 'trapezoid'].includes(shape)) warnings.add('Custom and trapezoid pads are approximated as rectangles.');
+                pads.push({ position: transform(point(childList(sub, 'at')), at, angle), size: point(childList(sub, 'size')),
+                    drill: [number(drill, oval ? 2 : 1), number(drill, oval ? 3 : 1)], drillOffset: point(drill && childList(drill, 'offset')),
+                    // KiCad pad angles are absolute; pad positions are footprint-local.
+                    angle: number(childList(sub, 'at'), 3), shape, ratio: number(childList(sub, 'roundrect_rratio'), 1, 0.25),
+                    front: plated && (layers.includes('F.Cu') || layers.includes('*.Cu')), back: plated && (layers.includes('B.Cu') || layers.includes('*.Cu')) });
+            }
+        } else if (head(item) === 'gr_text') { silkText(item);
+        } else if (head(item) === 'via') {
+            const size = number(childList(item, 'size')), drill = number(childList(item, 'drill'));
+            const layers = childList(item, 'layers');
+            const layerNames = layers?.items.map(i => i.kind === 'atom' ? i.value : '') ?? [];
+            // Blind/buried vias do not drill all the way through the substrate.
+            if (layerNames.includes('F.Cu') && layerNames.includes('B.Cu')) pads.push({ position: point(childList(item, 'at')),
+                size: [size, size], drill: [drill, drill], drillOffset: [0, 0], angle: 0, shape: 'circle', ratio: 0,
+                front: true, back: true });
+        } else if (head(item)?.startsWith('gr_') || ['segment', 'arc'].includes(head(item) ?? '')) graphic(item);
+    }
+    const loops: Point[][] = [];
+    const near = (a: Point, b: Point) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.01;
+    while (outlines.length) {
+        const loop = outlines.shift()!;
+        while (!near(loop[0], loop[loop.length - 1])) {
+            const index = outlines.findIndex(p => near(loop[loop.length - 1], p[0]) || near(loop[loop.length - 1], p[p.length - 1]));
+            if (index < 0) break;
+            const next = outlines.splice(index, 1)[0];
+            if (!near(loop[loop.length - 1], next[0])) next.reverse();
+            loop.push(...next.slice(1));
+        }
+        if (loop.length >= 4 && near(loop[0], loop[loop.length - 1])) loops.push(loop.slice(0, -1));
+        else warnings.add('Open Edge.Cuts contour omitted; close the outline in KiCad.');
+    }
+    if (!loops.length) warnings.add('No closed board outline: only pads, tracks and component models are shown.');
+    return { thickness: Math.max(0.1, number(childList(childList(board, 'general') ?? board, 'thickness'), 1, 1.6)), loops, pads, traces, silkTexts, silkPolygons,
+        models: modelReferences(text), warnings: [...warnings] };
+}

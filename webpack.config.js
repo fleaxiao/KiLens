@@ -1,5 +1,3 @@
-/* eslint-env node */
-
 'use strict';
 
 const path = require('path');
@@ -64,4 +62,27 @@ const webTestConfig = {
 	}
 };
 
-module.exports = env => env?.extensionOnly ? webExtensionConfig : [webExtensionConfig, webTestConfig];
+const desktopExtensionConfig = {
+	...baseConfig,
+	target: 'node',
+	entry: './src/node/extension.ts',
+	plugins: [],
+	output: {
+		filename: 'extension.js',
+		path: path.resolve(__dirname, 'dist', 'node'),
+		libraryTarget: 'commonjs2'
+	}
+};
+
+const preview3dConfig = {
+	...baseConfig,
+	target: 'web',
+	entry: './src/web/preview3d.ts',
+	output: {
+		filename: 'preview3d.js',
+		path: path.resolve(__dirname, 'media', '3d'),
+		library: { name: 'KiLens3D', type: 'var' }
+	}
+};
+
+module.exports = env => env?.extensionOnly ? [webExtensionConfig, desktopExtensionConfig, preview3dConfig] : [webExtensionConfig, desktopExtensionConfig, webTestConfig, preview3dConfig];

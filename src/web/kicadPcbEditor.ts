@@ -18,7 +18,7 @@ interface Atom {
 	readonly end: number;
 }
 
-interface List {
+export interface List {
 	readonly kind: 'list';
 	readonly start: number;
 	end: number;
@@ -46,7 +46,7 @@ function parseString(text: string, start: number): Atom {
 	throw new Error('Unterminated string in KiCad document.');
 }
 
-function parseDocument(text: string): List {
+export function parseDocument(text: string): List {
 	const root: List = { kind: 'list', start: 0, end: text.length, items: [] };
 	const stack = [root];
 	let index = 0;
@@ -98,12 +98,12 @@ function parseDocument(text: string): List {
 	return root;
 }
 
-function head(list: List): string | undefined {
+export function head(list: List): string | undefined {
 	const first = list.items[0];
 	return first?.kind === 'atom' ? first.value : undefined;
 }
 
-function childList(list: List, name: string): List | undefined {
+export function childList(list: List, name: string): List | undefined {
 	return list.items.find(
 		(item): item is List => item.kind === 'list' && head(item) === name
 	);

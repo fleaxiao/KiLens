@@ -2,6 +2,8 @@ node_modules/
 .vscode-test-web/
 *.vsix
 dist/
+media/3d/
+artifacts/
 *.log
 .vsixmanifest
 .git-backup*/

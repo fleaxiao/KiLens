@@ -110,9 +110,10 @@ function html(source) {
         assert.equal(await netButton.getAttribute('aria-expanded'), 'true');
         assert.ok(await page.evaluate(() => {
             const net = document.querySelector('.net-toolbar-button').getBoundingClientRect();
-            const refresh = document.querySelector('.refresh-button:not(.net-toolbar-button)').getBoundingClientRect();
-            return net.top === refresh.top && net.height === refresh.height && net.right + 4 === refresh.left;
-        }), 'Net sits alongside the existing toolbar buttons');
+            const mode = document.querySelector('.three-toolbar-button').getBoundingClientRect();
+            const refresh = document.querySelector('[aria-label="Refresh Preview"]').getBoundingClientRect();
+            return net.top === refresh.top && net.height === refresh.height && net.right + 4 === mode.left && mode.right + 4 === refresh.left;
+        }), '3D sits between Net and Refresh in the toolbar');
         await page.keyboard.press('Escape');
         assert.equal(await page.locator('.pcb-display-controls').isVisible(), false);
         await netButton.click();
