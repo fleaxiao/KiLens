@@ -87,7 +87,9 @@
                 for (const part of graphics) part.composite_operation = 'source-over';
                 overlay.graphics = {
                     composite_operation: 'source-over',
-                    render(matrix, depth) { graphics.forEach((part, index) => part.render(matrix, depth + index * .01, 1)); },
+                    // Keep sub-parts inside one layer's depth interval so drill
+                    // markers rendered above a selected pad remain in front.
+                    render(matrix, depth) { graphics.forEach((part, index) => part.render(matrix, depth + index * .009 / graphics.length, 1)); },
                     dispose() { for (const part of graphics) part.dispose(); }
                 };
             }
@@ -104,7 +106,9 @@
             if (this.selected && highlightedLayers !== layerState()) this.paint_selected();
             const restores = [];
             if (this.selected) {
+                const padSelected = ['pad', 'footprint'].includes(kind(this.selected.context));
                 for (const layer of this.layers.in_order()) {
+                    if (padSelected && /:(?:BBViaHoles|BBViaHoleWalls|Via:Holes|Via:HoleWalls)$/.test(layer.name)) continue;
                     const graphics = layer.graphics;
                     if (!graphics) continue;
                     const render = graphics.render;

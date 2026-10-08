@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { EnhancedRender } from './enhancedRender';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { VRMLLoader } from 'three/examples/jsm/loaders/VRMLLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -9,6 +10,8 @@ interface Options {
     postMessage: (message: unknown) => void;
     state?: { position: number[]; target: number[] };
     persist: (state: { position: number[]; target: number[] }) => void;
+    enhanced?: boolean;
+    persistEnhanced: (enabled: boolean) => void;
     textStrokes: (text: SilkText3d) => Point[][];
 }
 const radians = THREE.MathUtils.degToRad;
@@ -36,6 +39,17 @@ function path(points: Point[]): THREE.Shape {
     const result = new THREE.Shape(points.map(p => new THREE.Vector2(p[0], -p[1])));
     result.closePath();
     return result;
+}
+export function copperZoneGeometry(points: Point[], back: boolean): THREE.ShapeGeometry {
+    const geometry = new THREE.ShapeGeometry(path(points));
+    if (back) {
+        const indices = geometry.index!;
+        for (let i = 0; i < indices.count; i += 3) {
+            const first = indices.getX(i); indices.setX(i, indices.getX(i + 2)); indices.setX(i + 2, first);
+        }
+        geometry.computeVertexNormals();
+    }
+    return geometry;
 }
 function contains(loop: Point[], p: Point): boolean {
     let inside = false;
@@ -80,6 +94,36 @@ export function placeModel(object: THREE.Object3D, ref: ModelReference, thicknes
     placement.add(object); footprint.add(placement);
     return footprint;
 }
+/** A component WRL may include a CAD viewer's environment, not just geometry. */
+export function loadWrlModel(text: string): THREE.Object3D {
+    if (!/^#VRML V2\.0/m.test(text)) throw new Error('Only VRML 2.0 models are supported.');
+    // PCB model geometry is local. Never fetch URLs embedded in VRML files.
+    if (/\b(?:Inline|ImageTexture|MovieTexture|AudioClip)\s*\{/.test(text)) throw new Error('External VRML resources are unsupported. Use a self-contained model.');
+    const object = new VRMLLoader().parse(text, '');
+    const backgrounds: THREE.Object3D[] = [];
+    // Three.js r180 marks Background groups this way. Filtering the loader's
+    // explicit marker preserves legitimate spheres and large component parts.
+    object.traverse(item => { if (item.renderOrder === -Infinity) backgrounds.push(item); });
+    const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>();
+    for (const background of backgrounds) {
+        background.removeFromParent();
+        background.traverse(item => {
+            if (!(item instanceof THREE.Mesh)) return;
+            geometries.add(item.geometry);
+            (Array.isArray(item.material) ? item.material : [item.material]).forEach(material => materials.add(material));
+        });
+    }
+    geometries.forEach(geometry => geometry.dispose()); materials.forEach(material => material.dispose());
+    object.scale.multiplyScalar(2.54); // KiCad WRL library units: 0.1 inch.
+    return object;
+}
+export function usableCameraState(state: Options['state'], bounds: THREE.Sphere): boolean {
+    if (!state || ![state.position, state.target].every(v => v?.length === 3 && v.every(Number.isFinite))) return false;
+    const position = new THREE.Vector3().fromArray(state.position), target = new THREE.Vector3().fromArray(state.target);
+    // Recover cameras saved while a model's background inflated the board bounds.
+    const limit = Math.max(1, bounds.radius) * 100;
+    return position.distanceTo(target) > 0.001 && position.distanceTo(bounds.center) < limit && target.distanceTo(bounds.center) < limit;
+}
 export function mount(options: Options) {
     const { container } = options;
     const data = parseBoard3d(options.source);
@@ -87,40 +131,70 @@ export function mount(options: Options) {
     const status = container.querySelector<HTMLElement>('.three-status')!;
     const details = container.querySelector<HTMLElement>('.three-details')!;
     // Logarithmic depth also preserves layer separation when zoomed inside the board bounds.
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, stencil: true, logarithmicDepthBuffer: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true, logarithmicDepthBuffer: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor(0x101d23);
+    renderer.setClearColor(0x101d23, 1);
     viewport.append(renderer.domElement);
+    renderer.domElement.style.visibility = 'hidden';
     renderer.domElement.tabIndex = 0;
     renderer.domElement.setAttribute('aria-label', '3D PCB preview: drag to orbit, right-drag to pan, scroll to zoom');
     const scene = new THREE.Scene(), assembly = new THREE.Group(), models = new THREE.Group(), silkscreen = new THREE.Group();
     scene.add(assembly); assembly.add(models, silkscreen);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x607080, 2.5));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x68715e, 2.5));
     const light = new THREE.DirectionalLight(0xffffff, 3); light.position.set(50, -20, 100); scene.add(light);
     const bottomLight = new THREE.DirectionalLight(0xffffff, 2); bottomLight.position.set(-30, 40, -70); scene.add(bottomLight);
     const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 1000); camera.up.set(0, 0, 1);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = false;
-    let disposed = false, active = true, userMoved = false;
+    controls.enableDamping = false; controls.enabled = false;
+    let disposed = false, active = true, interacting = false, modelsLoading = true, cameraInitialized = false;
+    let requestedView: string | undefined;
+    let enhanced: EnhancedRender | undefined;
+    const renderToggle = container.querySelector<HTMLInputElement>('[name=three-render]')!;
+    renderToggle.checked = options.enhanced === true;
+    const renderStatus = container.querySelector<HTMLElement>('.three-render-status')!;
+    const boardShapes: THREE.Shape[] = [];
     const bounds = new THREE.Sphere(new THREE.Vector3(), 20);
     const updateBounds = () => {
         const box = new THREE.Box3().setFromObject(assembly);
         if (!box.isEmpty()) box.getBoundingSphere(bounds);
+        enhanced?.invalidate();
     };
-    const draw = () => {
-        if (!disposed && active) { updateCameraDepth(camera, bounds); renderer.render(scene, camera); }
+    const raster = () => {
+        if (disposed || !active || !cameraInitialized || document.hidden) return;
+        updateCameraDepth(camera, bounds);
+        try {
+            if (renderToggle.checked) {
+                enhanced ??= new EnhancedRender(renderer, scene, assembly, camera, [light, bottomLight]);
+                enhanced.render(bounds, !interacting && !modelsLoading);
+            } else {
+                enhanced?.setEnabled(false); renderer.render(scene, camera);
+            }
+        } catch (error) {
+            enhanced?.dispose(); enhanced = undefined;
+            renderToggle.checked = false; options.persistEnhanced(false);
+            renderStatus.hidden = false; renderStatus.textContent = 'Enhanced rendering unavailable. Standard preview restored: ' + String(error);
+            renderer.setRenderTarget(null); renderer.setScissorTest(false); renderer.autoClear = true;
+            renderer.render(scene, camera);
+        }
     };
+    const draw = () => raster();
     controls.addEventListener('change', draw);
-    controls.addEventListener('start', () => { userMoved = true; });
-    controls.addEventListener('end', () => options.persist({ position: camera.position.toArray(), target: controls.target.toArray() }));
-    renderer.domElement.addEventListener('webglcontextlost', event => {
-        event.preventDefault(); status.textContent = 'Graphics context lost. Return to 2D and refresh the preview.';
+    controls.addEventListener('start', () => { interacting = true; draw(); });
+    controls.addEventListener('end', () => {
+        interacting = false; draw(); options.persist({ position: camera.position.toArray(), target: controls.target.toArray() });
     });
-    const green = new THREE.MeshStandardMaterial({ color: 0x176447, roughness: 0.65, side: THREE.DoubleSide });
+    renderer.domElement.addEventListener('webglcontextlost', event => {
+        renderToggle.disabled = true; renderStatus.hidden = true;
+        event.preventDefault(); status.hidden = false; status.textContent = 'Graphics context lost. Return to 2D and refresh the preview.';
+    });
+    const green = new THREE.MeshStandardMaterial({ color: 0x153b1b, roughness: 0.65, side: THREE.DoubleSide });
     const edge = new THREE.MeshStandardMaterial({ color: 0xbba878, roughness: 0.85 });
     const copper = new THREE.MeshStandardMaterial({ color: 0xcdb77d, metalness: 0.5, roughness: 0.38, side: THREE.DoubleSide });
-    const track = new THREE.MeshStandardMaterial({ color: 0x288867, roughness: 0.6 });
+    const track = new THREE.MeshStandardMaterial({ color: 0x234c25, roughness: 0.6 });
     const silk = new THREE.MeshStandardMaterial({ color: 0xf1eee3, roughness: 0.7 });
+    green.userData.kilensSurface = 'soldermask'; track.userData.kilensSurface = 'soldermask';
+    copper.userData.kilensSurface = 'copper'; silk.userData.kilensSurface = 'silkscreen';
+    for (const material of [copper, track, silk]) material.userData.kilensArtwork = true;
     // Clip surface artwork to the visible board face, including every drill/cutout.
     // Depth testing remains enabled for artwork so components and the board occlude it.
     if (data.loops.length) for (const material of [copper, track, silk]) {
@@ -138,6 +212,7 @@ export function mount(options: Options) {
             if (contains(loop, p)
                 && !data.loops.some((inner, j) => depths[j] === depths[i] + 1 && contains(inner, p))) shape.holes.push(drillPath);
         }
+        boardShapes.push(shape);
         const mesh = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: data.thickness, bevelEnabled: false, curveSegments: 12 }), [green, edge]);
         mesh.position.z = -data.thickness / 2; assembly.add(mesh);
         const maskGeometry = new THREE.ShapeGeometry(shape, 12);
@@ -152,6 +227,13 @@ export function mount(options: Options) {
             mask.renderOrder = -1; assembly.add(mask);
         }
     });
+    for (const polygon of data.copperPolygons) {
+        // Copper beneath solder mask, below tracks and exposed pads. Reuse the
+        // artwork material so batching and board/drill clipping work in both renderers.
+        const mesh = new THREE.Mesh(copperZoneGeometry(polygon.points, polygon.back), track);
+        mesh.position.z = (polygon.back ? -1 : 1) * (data.thickness / 2 + 0.008);
+        assembly.add(mesh);
+    }
     for (const pad of data.pads) {
         if (pad.size.some(v => v <= 0)) continue;
         const shape = padShape(pad.size, pad.shape, pad.ratio);
@@ -221,17 +303,23 @@ export function mount(options: Options) {
         controls.target.copy(center); controls.update(); draw();
         if (persist) options.persist({ position: camera.position.toArray(), target: controls.target.toArray() });
     };
-    resize(); fit('iso', false);
-    if (options.state && [options.state.position, options.state.target].every(v => v?.length === 3 && v.every(Number.isFinite))) {
-        camera.position.fromArray(options.state.position); controls.target.fromArray(options.state.target); controls.update();
-    }
+    resize();
     const listeners = new AbortController();
-    container.querySelectorAll<HTMLButtonElement>('[data-three-view]').forEach(button => button.addEventListener('click', () => { userMoved = true; fit(button.dataset.threeView); }, { signal: listeners.signal }));
+    renderToggle.addEventListener('change', () => {
+        options.persistEnhanced(renderToggle.checked); renderStatus.hidden = true; draw();
+    }, { signal: listeners.signal });
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) draw();
+    }, { signal: listeners.signal });
+    container.querySelectorAll<HTMLButtonElement>('[data-three-view]').forEach(button => button.addEventListener('click', () => {
+        if (!cameraInitialized) requestedView = button.dataset.threeView;
+        else fit(button.dataset.threeView);
+    }, { signal: listeners.signal }));
     container.querySelector<HTMLInputElement>('[name=three-models]')!.addEventListener('change', event => {
-        models.visible = (event.target as HTMLInputElement).checked; draw();
+        models.visible = (event.target as HTMLInputElement).checked; enhanced?.invalidate(); draw();
     }, { signal: listeners.signal });
     container.querySelector<HTMLInputElement>('[name=three-silkscreen]')!.addEventListener('change', event => {
-        silkscreen.visible = (event.target as HTMLInputElement).checked; draw();
+        silkscreen.visible = (event.target as HTMLInputElement).checked; enhanced?.invalidate(); draw();
     }, { signal: listeners.signal });
     const pending = new Map<string, { resolve: (value: { bytes: number[]; format: string }) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
     const session = Math.random().toString(36).slice(2);
@@ -276,14 +364,18 @@ export function mount(options: Options) {
             geometry.setIndex(part.index.array);
             if (part.attributes.normal) geometry.setAttribute('normal', new THREE.Float32BufferAttribute(part.attributes.normal.array, 3)); else geometry.computeVertexNormals();
             const material = (color: number[]) => new THREE.MeshStandardMaterial({ color: new THREE.Color().setRGB(...color as [number, number, number], THREE.SRGBColorSpace), metalness: 0.15, roughness: 0.55 });
-            const materials = [material(part.color ?? [0.65, 0.67, 0.69])];
+            const defaultColor = part.color ?? [0.65, 0.67, 0.69];
+            const materials = [material(defaultColor)];
+            const materialIndices = new Map<string, number>([[defaultColor.join(','), 0]]);
             const faces = part.brep_faces ?? [];
             let cursor = 0;
             for (const face of faces) {
                 if (!face.color) continue;
                 const start = face.first * 3, count = (face.last - face.first + 1) * 3;
                 if (start > cursor) geometry.addGroup(cursor, start - cursor, 0);
-                materials.push(material(face.color)); geometry.addGroup(start, count, materials.length - 1); cursor = start + count;
+                const key = face.color.join(',');
+                if (!materialIndices.has(key)) { materialIndices.set(key, materials.length); materials.push(material(face.color)); }
+                geometry.addGroup(start, count, materialIndices.get(key)!); cursor = start + count;
             }
             if (cursor < part.index.array.length) geometry.addGroup(cursor, part.index.array.length - cursor, 0);
             group.add(new THREE.Mesh(geometry, materials));
@@ -296,6 +388,8 @@ export function mount(options: Options) {
     const messages = [...data.warnings];
     const report = () => {
         status.textContent = `Models: ${loaded}/${data.models.length}${failures.size ? ` · ${failures.size} file(s) unavailable` : ''}`;
+        status.hidden = !modelsLoading;
+        if (modelsLoading) status.textContent = 'Loading 3D models…';
         details.textContent = [...messages, ...Array.from(failures, ([name, error]) => `${name}: ${error}`)].join('\n');
         details.hidden = !details.textContent;
     };
@@ -307,31 +401,50 @@ export function mount(options: Options) {
                 if (failures.has(ref.path)) continue;
                 let object = cache.get(ref.path);
                 if (!object) {
+                    status.hidden = false;
                     status.textContent = `Loading model ${index + 1}/${data.models.length}: ${ref.path}`;
                     const response = await requestModel(index);
                     if (disposed) break;
                     if (response.format === 'wrl') {
                         const text = new TextDecoder().decode(new Uint8Array(response.bytes));
-                        if (!/^#VRML V2\.0/m.test(text)) throw new Error('Only VRML 2.0 models are supported.');
-                        // PCB model geometry is local. Never fetch URLs embedded in VRML files.
-                        if (/\b(?:Inline|ImageTexture|MovieTexture|AudioClip)\s*\{/.test(text)) throw new Error('External VRML resources are unsupported. Use a self-contained model.');
-                        object = new VRMLLoader().parse(text, '');
-                        object.scale.multiplyScalar(2.54); // KiCad WRL library units: 0.1 inch.
+                        object = loadWrlModel(text);
                     } else object = await step(new Uint8Array(response.bytes));
                     cache.set(ref.path, object);
                 }
                 if (disposed) break;
-                models.add(placeModel(object.clone(true), ref, data.thickness)); loaded++; updateBounds(); draw();
+                models.add(placeModel(object.clone(true), ref, data.thickness)); loaded++; updateBounds(); enhanced?.invalidate(); draw();
             } catch (error) { if (!disposed) failures.set(ref.path, String((error as Error).message ?? error)); }
             if (!disposed) report();
             await new Promise(resolve => setTimeout(resolve, 0));
         }
-        if (!disposed && !userMoved && !options.state) fit();
+        modelsLoading = false;
+        if (!disposed) {
+            // Establish the camera once against the complete assembly. Never show
+            // the board-only fit and then visibly recenter as models arrive.
+            if (!requestedView && usableCameraState(options.state, bounds) && options.state) {
+                camera.position.fromArray(options.state.position); controls.target.fromArray(options.state.target); controls.update();
+            } else fit(requestedView ?? 'iso');
+            cameraInitialized = true; controls.enabled = active;
+            renderer.domElement.style.visibility = 'visible';
+            report(); enhanced?.invalidate(); draw();
+        }
     })();
     return {
-        setActive(value: boolean) { active = value; controls.enabled = value; if (value) { resize(); draw(); } },
+        captureImage() {
+            if (disposed || !active || !cameraInitialized || renderer.getContext().isContextLost()) throw new Error('The 3D preview is currently unavailable.');
+            const clearColor = renderer.getClearColor(new THREE.Color()), clearAlpha = renderer.getClearAlpha();
+            try {
+                renderer.setClearColor(0x000000, 0);
+                raster();
+                return renderer.domElement.toDataURL('image/png');
+            } finally {
+                renderer.setClearColor(clearColor, clearAlpha);
+                raster();
+            }
+        },
+        setActive(value: boolean) { active = value; controls.enabled = value && cameraInitialized; interacting = false; if (value) { resize(); draw(); } },
         dispose() {
-            disposed = true; listeners.abort(); observer.disconnect(); controls.dispose(); worker?.terminate(); stepReject?.(new Error('Preview closed'));
+            disposed = true; enhanced?.dispose(); listeners.abort(); observer.disconnect(); controls.dispose(); worker?.terminate(); stepReject?.(new Error('Preview closed'));
             for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error('Preview closed')); } pending.clear();
             const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>();
             const collect = (object: THREE.Object3D) => object.traverse(item => {

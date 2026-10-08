@@ -37,7 +37,7 @@ const board = `(kicad_pcb (version 20240108) (generator pcbnew)
  (footprint "Missing" (layer "F.Cu") (at 45 10) (uuid "missing") (model "missing.step"))
  (footprint "Back" (layer "B.Cu") (at 20 30 90) (uuid "back") (model "model.wrl"))
 )`;
-const wrl = '#VRML V2.0 utf8\nTransform { translation 0 0 0.5 children [ Shape { appearance Appearance { material Material { diffuseColor 0.2 0.3 0.8 } } geometry Box { size 2 1 1 } } ] }';
+const wrl = '#VRML V2.0 utf8\nTransform { translation 0 0 0.5 children [ Background { skyColor [1 1 1] groundAngle [1.57] groundColor [0.2 0.2 0.2 0.1 0.1 0.1] } Shape { appearance Appearance { material Material { diffuseColor 0.2 0.3 0.8 } } geometry Box { size 2 1 1 } } ] }';
 const stepBytes = fs.readFileSync('node_modules/occt-import-js/test/testfiles/simple-basic-cube/cube.stp');
 function html(source = board, suffix = 'kicad_pcb') {
     const vscode = { Uri: { joinPath: Utils.joinPath } };
@@ -108,7 +108,45 @@ async function unitTests() {
     const arc = parsed.arcPoints([1, 0], [0, 1], [-1, 0]);
     assert.ok(Math.abs(arc[Math.floor(arc.length / 2)][1] - 1) < 0.005);
     const THREE = require('three');
-    const { placeModel, strokeGeometry, updateCameraDepth } = load('src/web/preview3d.ts');
+    const { placeModel, strokeGeometry, updateCameraDepth, copperZoneGeometry, loadWrlModel, usableCameraState } = load('src/web/preview3d.ts');
+    const component = loadWrlModel(wrl);
+    const componentBox = new THREE.Box3().setFromObject(component);
+    assert.ok(componentBox.getSize(new THREE.Vector3()).distanceTo(new THREE.Vector3(5.08, 2.54, 2.54)) < 1e-6,
+        'CAD sky and ground backgrounds must not inflate component bounds');
+    const sphereModel = loadWrlModel('#VRML V2.0 utf8\nGroup { children [ DEF Studio Background { skyColor [1 1 1] } Shape { geometry Sphere { radius 12000 } } ] }');
+    let sphereCount = 0;
+    sphereModel.traverse(item => { if (item.isMesh) sphereCount++; });
+    assert.equal(sphereCount, 1, 'Remove named backgrounds while retaining real sphere geometry regardless of size');
+    for (const root of [component, sphereModel]) root.traverse(item => {
+        if (item.isMesh) { item.geometry.dispose(); item.material.dispose(); }
+    });
+    const cameraBounds = new THREE.Sphere(new THREE.Vector3(50, -55, 0), 32);
+    assert.equal(usableCameraState({ position: [150, -200, 100], target: [50, -55, 0] }, cameraBounds), true);
+    assert.equal(usableCameraState({ position: [50000, -50000, 50000], target: [50, -55, 0] }, cameraBounds), false,
+        'Refit a camera saved with an imported background sphere');
+    assert.equal(usableCameraState({ position: [NaN, 0, 0], target: [50, -55, 0] }, cameraBounds), false);
+    const square = '(pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))';
+    const zones = parsed.parseBoard3d(`(kicad_pcb
+        (zone (layer "F.Cu") (polygon ${square}) (filled_polygon ${square}))
+        (zone (layers "F.Cu" "In1.Cu" "B.Cu") (filled_polygon (layer "B.Cu") ${square}) (filled_polygon (layer "In1.Cu") ${square}))
+        (zone (layer "F.Cu") (keepout (copperpour not_allowed)) (filled_polygon ${square}))
+        (zone (layer "B.Cu") (polygon ${square}))
+        (footprint "Zone" (layer "B.Cu") (at 20 30 90) (zone (layer "B.Cu") (filled_polygon ${square}))))`);
+    assert.equal(zones.copperPolygons.length, 3, 'Only saved outer-layer fills are drawn, excluding keepouts and zone outlines');
+    assert.deepEqual(plain(zones.copperPolygons.map(p => p.back)), [false, true, true]);
+    assert.deepEqual(plain(zones.copperPolygons[2].points[1]), [20, 20], 'Footprint-local zone is placed in board coordinates');
+    assert.ok(zones.warnings.some(w => w.includes('Unfilled copper zones')));
+    // A KiCad clearance hole joined to its outline by a zero-width bridge.
+    const bridged = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 3], [3, 3], [3, 7], [7, 7], [7, 3], [3, 3], [0, 3]];
+    for (const back of [false, true]) {
+        const geometry = copperZoneGeometry(bridged, back), material = new THREE.MeshBasicMaterial();
+        const mesh = new THREE.Mesh(geometry, material), sign = back ? -1 : 1;
+        const probe = (x, y) => new THREE.Raycaster(new THREE.Vector3(x, -y, sign), new THREE.Vector3(0, 0, -sign)).intersectObject(mesh);
+        assert.ok(probe(1, 5).length, 'Saved copper contour is visible from its own side');
+        assert.equal(probe(5, 5).length, 0, 'Triangulation preserves clearance holes');
+        assert.equal(probe(-1, 5).length, 0, 'Triangulation stays within the filled contour');
+        geometry.dispose(); material.dispose();
+    }
     const stroke = strokeGeometry(10, 2);
     stroke.computeBoundingBox();
     assert.ok(stroke.boundingBox.min.distanceTo(new THREE.Vector3(-6, -1, 0)) < 1e-6);
@@ -224,7 +262,8 @@ async function unitTests() {
     console.log('3D parsing, transforms and model path tests passed');
 }
 async function browserTests() {
-    const browser = await chromium.launch({ headless: true, args: ['--disable-logging', '--enable-unsafe-swiftshader'] });
+    const browser = await chromium.launch({ headless: true, args: ['--disable-logging', '--enable-unsafe-swiftshader',
+        ...(process.env.KILENS_TEST_GPU ? ['--use-angle=d3d11'] : [])] });
     try {
         const page = await browser.newPage({ viewport: { width: 1100, height: 740 } });
         const errors = [], requests = [];
@@ -238,8 +277,13 @@ async function browserTests() {
                 getState: () => JSON.parse(sessionStorage.getItem('state') || '{}'),
                 setState: value => { window.savedPreviewState = value; sessionStorage.setItem('state', JSON.stringify(value)); },
                 postMessage: async message => {
+                    if (message.type === 'exportPreviewImage') {
+                        window.exportedImage = message;
+                        window.postMessage({ type: 'exportPreviewImageResult', requestId: message.requestId, cancelled: false }, '*');
+                    }
                     if (message.type === 'load3dModel') {
                         window.modelRequests.push(message.index);
+                        while (window.holdModelLoads) await new Promise(resolve => setTimeout(resolve, 20));
                         window.postMessage({ type: 'model3dResult', requestId: message.requestId, ...await window.modelBytes(message.index) }, '*');
                     }
                     if (message.type === 'refresh') location.reload();
@@ -259,12 +303,25 @@ async function browserTests() {
         });
         await page.goto('https://kilens.test/');
         assert.ok(!requests.some(url => url.includes('/3d/')), '3D engine must be lazy-loaded');
+        await page.evaluate(() => { window.holdModelLoads = true; });
         await page.getByRole('button', { name: '3D Preview', exact: true }).click();
+        await page.waitForFunction(() => window.modelRequests.length > 0);
+        assert.equal(await page.locator('.three-viewport canvas').isVisible(), false,
+            'Do not display a temporary board-only camera while models are loading');
+        assert.equal(await page.evaluate(() => savedPreviewState.camera3d), undefined);
+        await page.evaluate(() => { window.holdModelLoads = false; });
         await page.waitForFunction(() => document.querySelector('.three-status').textContent.includes('Models: 3/4'), null, { timeout: 45000 }).catch(async error => {
             console.log('3D diagnostics:', await page.locator('.three-message').textContent(), errors);
             throw error;
         });
         assert.ok((await page.locator('.three-details').textContent()).includes('missing.step'));
+        assert.equal(await page.locator('.three-viewport canvas').isVisible(), true);
+        const initialCamera = await page.evaluate(() => savedPreviewState.camera3d);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.deepEqual(await page.evaluate(() => savedPreviewState.camera3d), initialCamera,
+            'The first visible camera remains stable after loading');
+        assert.equal(await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).isChecked(), false, 'Enhanced rendering is off by default');
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).uncheck();
         assert.deepEqual(await page.evaluate(() => modelRequests), [0, 1, 2], 'Repeated WRL paths share a parsed model');
         await page.getByRole('button', { name: 'Fit', exact: true }).click();
         const first = await page.evaluate(() => savedPreviewState.camera3d);
@@ -279,15 +336,89 @@ async function browserTests() {
         await page.getByRole('button', { name: 'Fit', exact: true }).click();
         fs.mkdirSync('dist/test-output', { recursive: true });
         await page.screenshot({ path: 'dist/test-output/preview3d.png' });
+
+        assert.ok(!requests.some(url => /raytrace|raytrace-worker/.test(url)), 'Enhanced rendering never loads a path tracer');
+        await page.setViewportSize({ width: 560, height: 420 });
+        const waitForEnhanced = async () => {
+            await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            assert.equal(await page.locator('.three-render-status').textContent(), '', 'Enhanced renderer stays available');
+        };
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).check();
+        await waitForEnhanced();
+        assert.equal(await page.evaluate(() => savedPreviewState.enhanced3d), true);
+        await page.mouse.move(280, 210); await page.mouse.down();
+        await page.mouse.move(320, 235, { steps: 3 }); await page.mouse.up();
+        await waitForEnhanced();
+        await page.getByRole('button', { name: '2D', exact: true }).click();
+        await page.getByRole('button', { name: '3D Preview', exact: true }).click();
+        await waitForEnhanced();
+        await page.getByRole('checkbox', { name: 'Components', exact: true }).uncheck();
+        await waitForEnhanced();
+        await page.getByRole('checkbox', { name: 'Components', exact: true }).check();
+        await waitForEnhanced();
+        const enhancedScreenshot = await page.screenshot({ path: 'dist/test-output/preview3d-enhanced.png' });
+        const enhancedThree = require('three');
+        const enhancedCameraState = await page.evaluate(() => savedPreviewState.camera3d);
+        const enhancedCamera = new enhancedThree.PerspectiveCamera(40, 560 / 420, 0.1, 10000);
+        enhancedCamera.up.set(0, 0, 1); enhancedCamera.position.fromArray(enhancedCameraState.position);
+        enhancedCamera.lookAt(new enhancedThree.Vector3().fromArray(enhancedCameraState.target)); enhancedCamera.updateMatrixWorld();
+        const greenProbe = new enhancedThree.Vector3(40, -30, 0.8).project(enhancedCamera);
+        const boardPixel = await page.evaluate(async ({ base64, x, y }) => {
+            const image = new Image(); image.src = 'data:image/png;base64,' + base64; await image.decode();
+            const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+            const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+            return Array.from(ctx.getImageData(x, y, 1, 1).data);
+        }, { base64: enhancedScreenshot.toString('base64'), x: Math.round((greenProbe.x + 1) * 280), y: Math.round((1 - greenProbe.y) * 210) });
+        assert.ok(boardPixel[1] > boardPixel[0] * 1.2 && boardPixel[1] > boardPixel[2] * 1.1,
+            `Board stays green after tracing a scene with multi-material STEP models: ${boardPixel}`);
+        const completedStatus = await page.locator('.three-render-status').textContent();
+        await page.getByRole('button', { name: 'Export image', exact: true }).click();
+        await page.waitForFunction(() => window.exportedImage);
+        const enhancedExport = await page.evaluate(() => window.exportedImage);
+        assert.equal(enhancedExport.mode, '3d');
+        fs.writeFileSync('dist/test-output/export-3d-enhanced.png', Buffer.from(enhancedExport.dataUrl.split(',')[1], 'base64'));
+        const exportDifference = await page.evaluate(async screenshot => {
+            const decode = async src => {
+                const img = new Image(); img.src = src; await img.decode();
+                const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+                const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+                return { width: c.width, height: c.height, data: ctx.getImageData(0, 0, c.width, c.height).data };
+            };
+            const a = await decode(window.exportedImage.dataUrl), b = await decode(screenshot);
+            if (a.width !== b.width || a.height !== b.height) throw Error('Export dimensions changed');
+            // Compare opaque board pixels; the export background and MSAA edges are transparent.
+            let total = 0, count = 0;
+            for (let y = 100; y < a.height - 60; y++) for (let x = 0; x < a.width; x++) {
+                if (a.data[(y * a.width + x) * 4 + 3] !== 255) continue;
+                for (let k = 0; k < 3; k++) { const i = (y * a.width + x) * 4 + k; total += Math.abs(a.data[i] - b.data[i]); count++; }
+            }
+            if (!count) throw Error('Export has no opaque board pixels');
+            return total / count;
+        }, 'data:image/png;base64,' + enhancedScreenshot.toString('base64'));
+        assert.ok(exportDifference < 1, `Export keeps the enhanced frame, mean pixel difference ${exportDifference}`);
+        assert.equal(await page.locator('.three-render-status').textContent(), completedStatus, 'Export leaves rendering status unchanged');
+        await page.waitForTimeout(700);
+        assert.equal(await page.locator('.three-render-status').textContent(), completedStatus, 'No background sampling loop is required');
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).uncheck();
+        assert.equal(await page.locator('.three-render-status').isVisible(), false);
+        assert.equal(await page.locator('.three-viewport canvas').count(), 1);
+        // Rapid toggling preserves a single renderer.
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).check();
+        await page.waitForTimeout(450);
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).uncheck();
+        await page.waitForTimeout(700);
+        assert.equal(await page.locator('.three-render-status').isVisible(), false);
+        await page.setViewportSize({ width: 1100, height: 740 });
         const saved = await page.evaluate(() => savedPreviewState.camera3d);
         await page.reload();
         await page.waitForFunction(() => document.querySelector('.three-status').textContent.includes('Models: 3/4'), null, { timeout: 45000 });
         assert.deepEqual(await page.evaluate(() => savedPreviewState.camera3d), saved, 'Refresh retains camera and 3D mode');
+        assert.equal(await page.getByRole('combobox', { name: '光追质量' }).count(), 0, 'Quality selector is removed');
         assert.equal(await page.getByRole('button', { name: 'Model folder…', exact: true }).count(), 0);
         await page.keyboard.press('Alt+2');
-        assert.equal(await page.locator('.three-panel').isVisible(), true, 'Alt+2 no longer exits 3D');
-        await page.keyboard.press('Escape');
-        assert.equal(await page.locator('.three-panel').isVisible(), false);
+        assert.equal(await page.locator('.three-panel').isVisible(), false, 'Alt+2 selects 2D');
+        await page.keyboard.press('Alt+2');
+        assert.equal(await page.locator('.three-panel').isVisible(), false, 'Alt+2 keeps 2D selected');
         await page.keyboard.press('Alt+3');
         assert.equal(await page.locator('.three-panel').isVisible(), true);
         await page.keyboard.press('Alt+3');
@@ -314,7 +445,13 @@ async function browserTests() {
           (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (36 "B.SilkS" user) (37 "F.SilkS" user) (44 "Edge.Cuts" user))
           (setup (pad_to_mask_clearance 0)) (net 0 "")
           (gr_rect (start 0 0) (end 200 80) (stroke (width 0.05) (type default)) (fill none) (layer "Edge.Cuts"))
+          (gr_rect (start 80 10) (end 100 20) (stroke (width 0.05) (type default)) (fill none) (layer "Edge.Cuts"))
           ${['F', 'B'].map(side => `
+            (zone (layer "${side}.Cu") (filled_polygon (layer "${side}.Cu")
+              (pts (xy -30 5) (xy 130 5) (xy 130 70) (xy -30 70) (xy -30 50)
+                   (xy 40 50) (xy 40 65) (xy 60 65) (xy 60 50) (xy 40 50) (xy -30 50))))
+            (segment (start -30 60) (end 20 60) (width 4) (layer "${side}.Cu") (net 0))
+            (segment (start 50 15) (end 130 15) (width 4) (layer "${side}.Cu") (net 0))
             (segment (start 20 40) (end 160 40) (width 2) (layer "${side}.Cu") (net 0))
             (segment (start 160 40) (end 170 30) (width 2) (layer "${side}.Cu") (net 0))
             (gr_line (start 100 30) (end 100 50) (stroke (width 2) (type default)) (layer "${side}.SilkS"))
@@ -340,6 +477,10 @@ async function browserTests() {
             camera.up.set(0, 0, 1); camera.position.fromArray(state.position); camera.lookAt(new THREE.Vector3().fromArray(state.target)); camera.updateMatrixWorld();
             const sign = view === 'Bottom' ? -1 : 1;
             const samples = [
+                ...(view === 'Top' || view === 'Bottom' ? [
+                    { name: 'zone copper', p: [30, -57, sign * 0.808], kind: 'zone' },
+                    { name: 'zone clearance', p: [50, -57, sign * 0.8], kind: 'clearance' }
+                ] : []),
                 { name: 'pad covers trace', p: [83, -40, sign * 0.825], kind: 'pad' },
                 { name: 'silkscreen covers trace', p: [100, -40, sign * 0.845], kind: 'silk' },
                 { name: 'trace does not cover drill', p: [110, -40, sign * 0.812], kind: 'hole' },
@@ -355,6 +496,11 @@ async function browserTests() {
                 const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
                 return samples.map(s => ({ ...s, rgb: Array.from(ctx.getImageData(s.x - 1, s.y - 1, 3, 3).data) }));
             }, { base64: screenshot.toString('base64'), samples });
+            if (view === 'Top' || view === 'Bottom') {
+                const filled = pixels.find(p => p.kind === 'zone').rgb[17];
+                const gap = pixels.find(p => p.kind === 'clearance').rgb[17];
+                assert.ok(filled > gap + 10, `${view}: copper fill must be visible, with an unfilled clearance (${filled} / ${gap})`);
+            }
             for (const sample of pixels) {
                 let matches = 0;
                 for (let i = 0; i < sample.rgb.length; i += 4) {
@@ -367,6 +513,31 @@ async function browserTests() {
                 assert.ok(matches >= 7, `${view}: ${sample.name} (${matches}/9 pixels matched: ${sample.rgb.slice(16, 19)})`);
             }
         }
+        await page.setViewportSize({ width: 620, height: 440 });
+        await page.getByRole('button', { name: 'Top', exact: true }).click();
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).check();
+        for (const view of ['Top', 'Bottom']) {
+            await page.getByRole('button', { name: view, exact: true }).click();
+            await waitForEnhanced();
+            const state = await page.evaluate(() => savedPreviewState.camera3d);
+            const camera = new THREE.PerspectiveCamera(40, 620 / 440, 0.1, 10000);
+            camera.up.set(0, 0, 1); camera.position.fromArray(state.position); camera.lookAt(new THREE.Vector3().fromArray(state.target)); camera.updateMatrixWorld();
+            const probes = [[110, -40, 0], [90, -15, 0], [-10, -60, 0]].map(p => {
+                const point = new THREE.Vector3(...p).project(camera);
+                return [Math.round((point.x + 1) * 310), Math.round((1 - point.y) * 220)];
+            });
+            const screenshot = await page.screenshot({ path: `dist/test-output/enhanced-clipping-${view.toLowerCase()}.png` });
+            const pixels = await page.evaluate(async ({ base64, probes }) => {
+                const image = new Image(); image.src = 'data:image/png;base64,' + base64; await image.decode();
+                const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+                const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+                return probes.map(([x, y]) => Array.from(ctx.getImageData(x, y, 1, 1).data).slice(0, 3));
+            }, { base64: screenshot.toString('base64'), probes });
+            for (const pixel of pixels) assert.ok(pixel[0] < 40 && pixel[1] < 55 && pixel[2] < 65,
+                `${view}: enhanced rendering clips copper at drills, cutouts and outside the board: ${pixel}`);
+        }
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).uncheck();
+        await page.setViewportSize({ width: 1500, height: 850 });
         source = `(kicad_pcb (version 20240108) (generator pcbnew)
           (general (thickness 1.6)) (paper "A4")
           (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (36 "B.SilkS" user) (37 "F.SilkS" user) (44 "Edge.Cuts" user))
@@ -412,7 +583,22 @@ async function browserTests() {
             await page.getByRole('checkbox', { name: 'Silkscreen', exact: true }).check();
         }
         assert.deepEqual(errors, []);
-        console.log('3D browser test passed: STEP/WRL, interaction, trace overlap, Newstroke text, mirrored back silkscreen and visibility');
+        // Missing GPU capabilities must fall back without breaking ordinary 3D.
+        await page.addInitScript(() => {
+            const getExtension = WebGL2RenderingContext.prototype.getExtension;
+            WebGL2RenderingContext.prototype.getExtension = function(name) {
+                return name === 'EXT_color_buffer_float' ? null : getExtension.call(this, name);
+            };
+        });
+        await page.reload();
+        await page.waitForFunction(() => document.querySelector('.three-status').textContent.includes('Models: 0/0'));
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).check();
+        await waitForEnhanced();
+        assert.equal(await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).isChecked(), true, 'LDR rendering works without float targets');
+        await page.getByRole('button', { name: 'Bottom', exact: true }).click();
+        assert.ok(await page.evaluate(() => savedPreviewState.camera3d.position[2] < savedPreviewState.camera3d.target[2]));
+        assert.deepEqual(errors, []);
+        console.log('3D browser test passed: STEP/WRL, interaction, artwork, enhanced rendering, export, toggling and LDR fallback');
     } finally { await browser.close(); }
 }
-(async () => { await unitTests(); await browserTests(); })().catch(error => { console.error(error); process.exitCode = 1; });
+(async () => { await unitTests(); if (!process.argv.includes('--unit')) await browserTests(); })().catch(error => { console.error(error); process.exitCode = 1; });

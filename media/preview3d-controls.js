@@ -35,10 +35,13 @@ window.KiLens3DControls = {
                     postMessage: message => options.vscode.postMessage(message),
                     state: options.savedState.camera3d,
                     textStrokes: window.KiLensStrokeText,
-                    persist: camera3d => options.persist({ camera3d })
+                    persist: camera3d => options.persist({ camera3d }),
+                    enhanced: options.savedState.enhanced3d === true,
+                    persistEnhanced: enhanced3d => options.persist({ enhanced3d })
                 });
                 mounted.setActive(opened);
             } catch (error) {
+                panel.querySelector('.three-status').hidden = false;
                 panel.querySelector('.three-status').textContent = `3D preview unavailable: ${error.message}. Check WebGL support, then refresh.`;
             } finally { loading = false; }
         }
@@ -55,10 +58,11 @@ window.KiLens3DControls = {
                 return true;
             }
             // Forwarded webview keyboard events can omit the physical key code.
+            const isTwo = ['Digit2', 'Numpad2'].includes(event.code) || event.key === '2' || [50, 98].includes(event.keyCode);
             const isThree = ['Digit3', 'Numpad3'].includes(event.code) || event.key === '3' || [51, 99].includes(event.keyCode);
-            if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && isThree) {
+            if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (isTwo || isThree)) {
                 event.preventDefault(); event.stopImmediatePropagation();
-                if (!event.repeat && !opened) void toggle(true);
+                if (!event.repeat && opened !== isThree) void toggle(isThree);
                 return true;
             }
             return false;
@@ -76,5 +80,11 @@ window.KiLens3DControls = {
         }, true);
         window.addEventListener('pagehide', () => mounted?.dispose(), { once: true });
         if (options.savedState.preview3d) void toggle(true);
+        return {
+            captureImage() {
+                if (!mounted || !opened) throw new Error('3D 预览尚未加载完成，请稍后重试。');
+                return mounted.captureImage();
+            }
+        };
     }
 };

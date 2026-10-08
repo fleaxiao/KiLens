@@ -87,12 +87,37 @@ export function parseBoard3d(text: string) {
     const traces: { points: Point[]; width: number; back: boolean; silk: boolean }[] = [];
     const warnings = new Set<string>();
     const silkTexts: SilkText3d[] = [], silkPolygons: { points: Point[]; back: boolean }[] = [];
+    const copperPolygons: { points: Point[]; back: boolean }[] = [];
     const flag = (list: List | undefined, name: string) => !!list && (list.items.some(i => i.kind === 'atom' && i.value === name)
         || ['yes', 'true'].includes(atom(childList(list, name))));
     const transform = (p: Point, at: Point, rotation: number): Point => {
         const a = -rotation * Math.PI / 180;
         return [at[0] + p[0] * Math.cos(a) - p[1] * Math.sin(a), at[1] + p[0] * Math.sin(a) + p[1] * Math.cos(a)];
     };
+    function zone(item: List, at: Point = [0, 0], angle = 0) {
+        if (childList(item, 'keepout')) return;
+        const layer = atom(childList(item, 'layer'));
+        const layerList = childList(item, 'layers');
+        const layers = layer ? [layer] : layerList?.items.slice(1).flatMap(i => i.kind === 'atom' ? [i.value] : []) ?? [];
+        const fills = children(item, 'filled_polygon');
+        if (!fills.length && layers.some(l => ['F.Cu', 'B.Cu', '*.Cu', 'F&B.Cu'].includes(l))) {
+            warnings.add('Unfilled copper zones omitted. Fill zones in KiCad (B) and save the board.');
+        }
+        for (const fill of fills) {
+            const fillLayer = atom(childList(fill, 'layer'));
+            const sides = fillLayer ? [fillLayer] : layers;
+            const pts = childList(fill, 'pts');
+            if (!pts) continue;
+            // Saved contours include clearance holes as zero-width bridges. Keep
+            // their repeated vertices intact for triangulation; never fill the zone outline.
+            const points = children(pts, 'xy').map(p => transform(point(p), at, angle));
+            if (points.length < 3) continue;
+            for (const side of ['F.Cu', 'B.Cu']) {
+                if (sides.includes(side) || sides.includes('*.Cu') || sides.includes('F&B.Cu'))
+                    copperPolygons.push({ points, back: side === 'B.Cu' });
+            }
+        }
+    }
     function graphic(item: List, at: Point = [0, 0], angle = 0) {
         const layer = atom(childList(item, 'layer'));
         if (!['Edge.Cuts', 'F.Cu', 'B.Cu', 'F.SilkS', 'B.SilkS'].includes(layer)) return;
@@ -151,6 +176,7 @@ export function parseBoard3d(text: string) {
             const variables = { ...boardVariables, ...Object.fromEntries(children(item, 'property').map(p => [atom(p).toUpperCase(), atom(p, 2)])) };
             for (const field of children(item, 'fp_text')) if (['reference', 'value'].includes(atom(field))) variables[atom(field).toUpperCase()] = atom(field, 2);
             for (const sub of children(item)) {
+                if (head(sub) === 'zone') { zone(sub, at, angle); continue; }
                 if (['fp_text', 'property'].includes(head(sub) ?? '')) { silkText(sub, at, angle, variables, true); continue; }
                 if (head(sub) !== 'pad') { if (head(sub)?.startsWith('fp_')) graphic(sub, at, angle); continue; }
                 const drill = childList(sub, 'drill'), oval = atom(drill) === 'oval';
@@ -164,6 +190,7 @@ export function parseBoard3d(text: string) {
                     angle: number(childList(sub, 'at'), 3), shape, ratio: number(childList(sub, 'roundrect_rratio'), 1, 0.25),
                     front: plated && (layers.includes('F.Cu') || layers.includes('*.Cu')), back: plated && (layers.includes('B.Cu') || layers.includes('*.Cu')) });
             }
+        } else if (head(item) === 'zone') { zone(item);
         } else if (head(item) === 'gr_text') { silkText(item);
         } else if (head(item) === 'via') {
             const size = number(childList(item, 'size')), drill = number(childList(item, 'drill'));
@@ -190,6 +217,6 @@ export function parseBoard3d(text: string) {
         else warnings.add('Open Edge.Cuts contour omitted; close the outline in KiCad.');
     }
     if (!loops.length) warnings.add('No closed board outline: only pads, tracks and component models are shown.');
-    return { thickness: Math.max(0.1, number(childList(childList(board, 'general') ?? board, 'thickness'), 1, 1.6)), loops, pads, traces, silkTexts, silkPolygons,
+    return { thickness: Math.max(0.1, number(childList(childList(board, 'general') ?? board, 'thickness'), 1, 1.6)), loops, pads, traces, silkTexts, silkPolygons, copperPolygons,
         models: modelReferences(text), warnings: [...warnings] };
 }

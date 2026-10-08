@@ -80,6 +80,7 @@ const preview3dConfig = {
 	entry: './src/web/preview3d.ts',
 	output: {
 		filename: 'preview3d.js',
+		chunkFilename: '[name].js',
 		path: path.resolve(__dirname, 'media', '3d'),
 		library: { name: 'KiLens3D', type: 'var' }
 	}

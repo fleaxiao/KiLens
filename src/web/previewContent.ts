@@ -28,7 +28,7 @@ export function getWebviewContent(
 	return `<!DOCTYPE html>
 		<html>
 		<head>
-			<link rel="stylesheet" href="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'theme.css')).with({ query: 'v=5' })}">
+			<link rel="stylesheet" href="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'theme.css')).with({ query: 'v=12' })}">
 		</head>
 		<body>
 			<form class="placement-editor" aria-label="Footprint placement editor">
@@ -69,8 +69,23 @@ export function getWebviewContent(
 					<path d="M20 4v7h-7"></path>
 				</svg>
 			</button>
+			<button class="refresh-button export-image-button" type="button" title="Export image (PNG)" aria-label="Export image">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<rect x="3" y="3" width="18" height="18" rx="2"></rect>
+					<path d="m3 17 6-6 4 4 3-3 5 5"></path>
+					<circle cx="8" cy="8" r="1.5"></circle>
+				</svg>
+			</button>
+			<div class="export-image-status" role="status" hidden></div>
+			<button class="refresh-button cycle-view-button" type="button" title="Switch view (Space)" aria-label="Switch view" aria-keyshortcuts="Space" disabled>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M8 7V3h13v13h-4"></path>
+					<rect x="3" y="7" width="14" height="14" rx="2"></rect>
+					<path d="M6 14h8m-3-3 3 3-3 3"></path>
+				</svg>
+			</button>
 			${isSchematic ? '' : `<button class="refresh-button copper-toolbar-button" type="button" title="铜层交替：F.Cu / B.Cu" aria-label="铜层交替" aria-pressed="false" disabled>
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 					<path d="M4 5h16M4 19h16M9 15V9l-2 2m2-2 2 2M15 9v6l-2-2m2 2 2-2"></path>
 				</svg>
 			</button>`}
@@ -83,16 +98,19 @@ export function getWebviewContent(
 					<button type="button" data-three-view="bottom">Bottom</button>
 					<label><input type="checkbox" name="three-models" checked> Components</label>
 					<label><input type="checkbox" name="three-silkscreen" checked> Silkscreen</label>
+					<label title="Soft shadows, environment reflections and ambient occlusion without a sampling wait"><input type="checkbox" name="three-render"> Enhanced rendering</label>
 				</div>
-				<button type="button" class="refresh-button three-close" title="Back to 2D (Esc)" aria-label="2D" aria-keyshortcuts="Escape">2D</button>
+				<button type="button" class="refresh-button three-close" title="Back to 2D (Alt+2 / Esc)" aria-label="2D" aria-keyshortcuts="Alt+2 Escape">2D</button>
 				<div class="three-message"><div class="three-status" role="status">Loading 3D preview…</div>
+					<div class="three-render-status" hidden></div>
 				<pre class="three-details" hidden></pre>
-				<div class="three-help">Drag: rotate · Right-drag: pan · Scroll: zoom · Alt+3: 3D · Esc: 2D</div></div>
+				</div>
 			</section>
-			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'preview3d-controls.js')).with({ query: 'v=shortcuts-4' })}"></script>`}
+			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'preview3d-controls.js')).with({ query: 'v=enhanced-3' })}"></script>`}
+			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'export-image.js')).with({ query: 'v=3' })}"></script>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'connectivity.js')).with({ query: 'v=5' })}"></script>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'ratsnest.js')).with({ query: 'v=9' })}"></script>
-			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'selection.js')).with({ query: 'v=5' })}"></script>
+			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'selection.js')).with({ query: 'v=6' })}"></script>
 			<script type="module" src="${scriptUri}"></script>
 			<kicanvas-embed theme="kicad" controls="basic" controlslist="nooverlay noflipview nodownload">
 				<kicanvas-source name="${documentName}">${documentSource}</kicanvas-source>
@@ -152,12 +170,15 @@ export function getWebviewContent(
 					vscode.setState(savedState);
 				}
 
-				if (!isSchematicDocument) KiLens3DControls.install({
+				const threeControls = isSchematicDocument ? null : KiLens3DControls.install({
 					vscode, savedState, persist: setPersistentState,
 					bundleUrl: '${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', '3d', 'preview3d.js'))}',
 					workerUrl: '${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', '3d', 'step-worker.js'))}',
 					wasmUrl: '${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', '3d', 'occt-import-js.wasm'))}'
 				});
+
+				KiLensImageExport.install({ vscode, capture: mode => mode === '3d'
+					? threeControls.captureImage() : KiLensImageExport.capture2d(getViewer()) });
 
 				function setupCopperOrder(viewer) {
 					const button = document.querySelector('.copper-toolbar-button');
@@ -179,7 +200,18 @@ export function getWebviewContent(
 									if (a >= 0 && b >= 0) [ordered[a], ordered[b]] = [ordered[b], ordered[a]];
 								}
 							}
-							yield* ordered;
+							// Layer-specific via graphics were interleaved with copper and
+							// covered by SMD pads. Draw every visible annulus above pads,
+							// followed by every drill, so another side's ring cannot fill it.
+							const viaWalls = ordered.filter(layer => /:(?:BBViaHoleWalls|Via:HoleWalls)$/.test(layer.name));
+							const viaHoles = ordered.filter(layer => /:(?:BBViaHoles|Via:Holes)$/.test(layer.name));
+							const vias = new Set([...viaWalls, ...viaHoles]);
+							yield* ordered.filter(layer => !vias.has(layer) && layer !== this.overlay);
+							const padSelected = ['Pad', 'Footprint'].includes(viewer.selected?.context?.constructor?.name);
+							if (padSelected) yield this.overlay;
+							yield* viaWalls;
+							yield* viaHoles;
+							if (!padSelected) yield this.overlay;
 						};
 						return layers;
 					}
@@ -369,6 +401,7 @@ export function getWebviewContent(
 					}
 
 					await setupSchematicZoomControl();
+					await setupCycleViewControl();
 					if (!restoreViewerState(viewer)) {
 						await applyZoomMode(isSchematicDocument
 							? 'zoom_to_schematic'
@@ -485,7 +518,9 @@ export function getWebviewContent(
 					}
 					schematicButton.name = 'zoom_to_schematic';
 					schematicButton.title = 'zoom to schematic';
-					schematicButton.setAttribute('icon', 'svg:schematic_file');
+					// The bundled button's icon attribute callback uses a stale selector.
+					const schematicIcon = schematicButton.shadowRoot?.querySelector('kc-ui-icon');
+					if (schematicIcon) schematicIcon.textContent = 'svg:schematic_file';
 					schematicButton.disabled = false;
 					schematicButton.removeAttribute('disabled');
 					schematicButton.addEventListener('click', event => {
@@ -494,6 +529,25 @@ export function getWebviewContent(
 						zoomSchematicToContents();
 						currentZoomMode = 'zoom_to_schematic';
 					}, { capture: true });
+				}
+
+				function updateCycleViewControl() {
+					const names = { zoom_to_page: 'Page', zoom_to_edge_cuts: 'Board', zoom_to_selection: 'Selection', zoom_to_schematic: 'Schematic' };
+					const button = document.querySelector('.cycle-view-button');
+					button.title = 'Switch view (Space) · Current: ' + names[currentZoomMode];
+					button.dataset.view = currentZoomMode;
+				}
+
+				async function setupCycleViewControl() {
+					const buttons = await waitForZoomControls();
+					for (const button of buttons) {
+						button.style.setProperty('display', 'none', 'important');
+						button.setAttribute('aria-hidden', 'true');
+					}
+					const control = document.querySelector('.cycle-view-button');
+					control.disabled = false;
+					control.addEventListener('click', () => void cycleZoomMode());
+					updateCycleViewControl();
 				}
 
 				function zoomWithViewer(modeName) {
@@ -526,11 +580,13 @@ export function getWebviewContent(
 					if (button && isButtonEnabled(button)) {
 						button.click();
 						currentZoomMode = modeName;
+						updateCycleViewControl();
 						return;
 					}
 
 					if (zoomWithViewer(modeName)) {
 						currentZoomMode = modeName;
+						updateCycleViewControl();
 					}
 				}
 
@@ -552,11 +608,12 @@ export function getWebviewContent(
 					if (event.ctrlKey || event.altKey || event.metaKey) {
 						return;
 					}
-					const target = event.target;
-					if (target instanceof HTMLElement && target.closest('input, textarea, select, button')) {
+					if (document.body.classList.contains('three-active')) return;
+					if (event.composedPath().some(target => target instanceof HTMLElement
+						&& (target.matches('input, textarea, select, button') || target.isContentEditable))) {
 						return;
 					}
-					if (event.code === 'Space') {
+					if (event.code === 'Space' || event.key === ' ') {
 						event.preventDefault();
 						void cycleZoomMode();
 						return;

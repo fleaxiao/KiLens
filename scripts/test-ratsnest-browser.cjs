@@ -363,6 +363,49 @@ function html(source) {
             await page.evaluate(() => new Promise(requestAnimationFrame));
             await page.screenshot({ path: process.env.KILENS_SELECTION_SCREENSHOT.replace('.png', '-footprint.png') });
         }
+        if (!process.argv[2]) {
+            // A layer-specific through via sits inside a solid SMD pad.
+            await page.evaluate(() => {
+                const v = getViewer(), via = v.board.vias[0], pad = v.board.footprints[0].pads[0];
+                const p = KiLensSelection.world(pad, pad.at.position);
+                v.select(null); via.at.position.set(p.x, p.y);
+                v.viewport.camera.center.set(p.x, p.y); v.viewport.camera.zoom = 100;
+                v.paint(); v.draw();
+                document.querySelector('.selection-filter').hidden = true;
+                document.querySelector('.pcb-display-controls').hidden = true;
+            });
+            const viaPixels = () => page.evaluate(() => {
+                const v = getViewer(); v.on_draw();
+                const c = document.createElement('canvas'); c.width = v.canvas.width; c.height = v.canvas.height;
+                const ctx = c.getContext('2d'); ctx.drawImage(v.canvas, 0, 0);
+                const via = v.board.vias[0], p = v.viewport.camera.world_to_screen(via.at.position);
+                const ratio = c.width / v.canvas.clientWidth;
+                const pixel = dx => Array.from(ctx.getImageData(Math.round((p.x + dx) * ratio), Math.round(p.y * ratio), 1, 1).data).slice(0, 3);
+                return { hole: pixel(0), ring: pixel((via.drill + via.size) / 4 * v.viewport.camera.zoom) };
+            });
+            const assertVia = async label => {
+                const { hole, ring } = await viaPixels();
+                assert.ok(hole[0] > 200 && hole[1] > 150 && hole[2] < 80, `${label}: gold drill marker stays above pad text (${hole})`);
+                assert.ok(ring.every(value => value > 220), `${label}: light via annulus stays above pad fill (${ring})`);
+            };
+            await assertVia('Front copper');
+            await page.evaluate(() => {
+                const v = getViewer(), pad = v.board.footprints[0].pads[0];
+                for (const layer of v.layers.in_order()) if (layer.selectionBoxes?.has(pad)) { v.select(layer.selectionBoxes.get(pad)); break; }
+                v.paint_selected();
+            });
+            await assertVia('Selected pad');
+            await page.evaluate(() => { getViewer().select(null); getViewer().paint_selected(); });
+            await copperButton.click();
+            await assertVia('Swapped copper');
+            await page.evaluate(() => { const v = getViewer(); v.layers.by_name('F.Cu').visible = false; v.paint(); v.draw(); });
+            await assertVia('Back copper only, after repaint');
+            await page.evaluate(() => { const v = getViewer(); for (const layer of v.layers.copper_layers()) layer.visible = false; v.draw(); });
+            assert.ok((await viaPixels()).ring.some(value => value < 200), 'Hiding all copper layers still hides their via graphics');
+            await page.evaluate(() => { const v = getViewer(); v.layers.by_name('F.Cu').visible = true; v.layers.by_name('B.Cu').visible = true; v.draw(); });
+            fs.mkdirSync('dist/test-output', { recursive: true });
+            await page.screenshot({ path: 'dist/test-output/via-on-pad-2d.png' });
+        }
         assert.equal(errors.length, 0, errors.join('\n'));
         console.log('Browser: pixels, toggle, pan/zoom/flip/resize, route connection and disconnection passed.');
     } finally { await browser.close(); }

@@ -11,9 +11,12 @@ its browser with `npx playwright install chromium`.
 | `src/node/` | Desktop entry point and local KiCad library discovery |
 | `src/web/extension.ts` | Shared custom editor provider and VS Code commands |
 | `src/web/previewContent.ts` | Webview markup and 2D interaction |
+| `src/web/exportImage.ts` | PNG validation and VS Code save dialog/filesystem bridge |
+| `media/export-image.js` | Current-view capture, 2D overlay composition, and export controls |
 | `src/web/kicadPcbEditor.ts` | KiCad parsing, net normalization, and footprint edits |
 | `src/web/board3dData.ts` | Board geometry and silkscreen extraction |
 | `src/web/preview3d.ts` | Three.js renderer and component placement |
+| `src/web/enhancedRender.ts` | On-demand material enhancement, cached shadows, studio environment, depth-aware ambient occlusion, and resource ownership |
 | `src/web/modelResolver.ts` | Model paths, filesystem access, and loading limits |
 | `src/web/test/` | VS Code web extension tests |
 | `media/` | Maintained browser scripts, styles, icons, and patched KiCanvas bundle |
@@ -32,13 +35,20 @@ bundle; keep its local changes reproducible in `scripts/patch-kicanvas-*.cjs`.
 npm run compile-web    # Build desktop/web entry points, 3D assets, and web tests
 npm run watch-web      # Prepare 3D dependencies, then watch source changes
 npm run typecheck      # TypeScript checks without emitting files
-npm run check          # TypeScript, connectivity, and 3D browser regression tests
+npm run check          # TypeScript, connectivity, 3D, and image export regression tests
 npm test               # Build and run the VS Code web extension test suite
 ```
 
 Run `npm run compile-web` before browser regression tests on a fresh checkout.
-Individual suites are available as `npm run test-ratsnest` and `npm run test-3d`.
+Individual suites are available as `npm run test-ratsnest`, `npm run test-3d`, and `npm run test-image-export`.
 Screenshots and temporary profiles are written under `dist/test-output/`.
+
+Image export tests cover PNG save/cancel/failure handling, source-folder/basename defaults (including Windows and remote URIs), PCB board bounds,
+camera restoration, independence from editor size and zoom, schematic captures,
+visible airwires, HiDPI resolution, and ordinary 3D. The 3D suite
+also compares an enhanced PNG against the displayed frame and checks repeated toggles, orbiting, model visibility and camera restoration. Capture redraws synchronously, preserving WebGL's default buffer policy instead of enabling continuous drawing-buffer preservation.
+
+The 3D browser suite exercises enhanced rendering and the LDR fallback on devices without floating-point targets. Copper fill tests cover saved contours, bridged clearance holes, front/back winding, footprint transforms, keepout exclusions, and rendered pixels at copper, clearances, drills and board cutouts in both render modes. On Windows, set `KILENS_TEST_GPU=1` to use ANGLE's D3D11 backend. Software rendering can be substantially slower.
 
 The desktop shortcut test opens an isolated VS Code profile. It checks repeated
 Esc/Alt+3 switching after focusing the 3D viewport, including focus behavior that

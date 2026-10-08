@@ -154,6 +154,11 @@
 		},
 		"keybindings": [
 			{
+				"command": "kilens.show2d",
+				"key": "alt+2",
+				"when": "activeCustomEditorId == kilens.preview"
+			},
+			{
 				"command": "kilens.show3d",
 				"key": "alt+3",
 				"when": "activeCustomEditorId == kilens.preview"
@@ -172,9 +177,10 @@
 		"package": "vsce package",
 		"publish": "vsce publish",
 		"test-3d": "node scripts/test-3d.cjs",
+		"test-image-export": "node scripts/test-image-export.cjs",
 		"typecheck": "tsc --noEmit",
 		"test-shortcuts": "node scripts/test-shortcuts-vscode.cjs",
-		"check": "npm run typecheck && npm run test-ratsnest && npm run test-3d"
+		"check": "npm run typecheck && npm run test-ratsnest && npm run test-3d && npm run test-image-export"
 	},
 	"files": [
 		"dist/node/extension.js",

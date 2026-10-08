@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { createFootprintPlacementReplacement } from './kicadPcbEditor';
 import { getWebviewContent } from './previewContent';
 import { readModel } from './modelResolver';
+import { exportPreviewImage } from './exportImage';
 
 class PreviewProvider implements vscode.CustomTextEditorProvider {
 	private readonly refreshCallbacks = new Set<() => void>();
@@ -47,7 +48,20 @@ class PreviewProvider implements vscode.CustomTextEditorProvider {
 			}
 		});
 
+		let exportingImage = false;
 		const messageSubscription = webviewPanel.webview.onDidReceiveMessage(message => {
+			if (message?.type === 'exportPreviewImage' && typeof message.requestId === 'string') {
+				if (exportingImage) {
+					void webviewPanel.webview.postMessage({ type: 'exportPreviewImageResult', requestId: message.requestId, error: '请先完成已打开的图片保存对话框。' });
+					return;
+				}
+				exportingImage = true;
+				void exportPreviewImage(document.uri, message).then(
+					result => webviewPanel.webview.postMessage({ type: 'exportPreviewImageResult', requestId: message.requestId, ...result }),
+					error => webviewPanel.webview.postMessage({ type: 'exportPreviewImageResult', requestId: message.requestId, error: String(error.message ?? error) })
+				).finally(() => { exportingImage = false; });
+				return;
+			}
 			if (message?.type === 'load3dModel' && Number.isInteger(message.index) && typeof message.requestId === 'string') {
 				const requestId = message.requestId;
 				void readModel(document, message.index).then(

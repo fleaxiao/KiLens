@@ -62,13 +62,24 @@ kicanvas-embed {
 .refresh-button svg {
     height: 16px;
     width: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 .net-toolbar-button {
     right: 84px;
 }
+.export-image-button { right: 8px; top: auto; bottom: 8px; }
+.cycle-view-button { right: 46px; top: auto; bottom: 8px; }
+.cycle-view-button:disabled { opacity: .5; cursor: wait; }
+.three-active .cycle-view-button { display: none; }
+.export-image-button:disabled { opacity: .5; cursor: wait; }
+.three-active .export-image-button { z-index: 21; }
+.export-image-status { position: fixed; right: 8px; bottom: 50px; z-index: 22; max-width: calc(100vw - 32px); padding: 8px; border-radius: 4px; background: var(--kilens-panel); color: var(--kilens-text); font: 12px/1.5 system-ui, sans-serif; }
 .copper-toolbar-button { right: 160px; }
-.copper-toolbar-button svg { height: 20px; width: 20px; }
 .copper-toolbar-button[aria-pressed="true"] { background: var(--kilens-green-hover); }
 .copper-toolbar-button:disabled { opacity: .5; cursor: default; }
 .pcb-display-controls[hidden] { display: none; }
@@ -300,8 +311,8 @@ kicanvas-embed {
 .three-controls input { accent-color: var(--kilens-copper); vertical-align: middle; }
 .three-controls button:focus-visible { outline: 2px solid var(--kilens-copper); outline-offset: 2px; }
 .three-message { position: absolute; bottom: 8px; left: 8px; right: 8px; pointer-events: none; }
-.three-status,.three-help { width: fit-content; max-width: 100%; overflow-wrap: anywhere; background: var(--kilens-panel); padding: 3px 8px; border-radius: 3px; }
-.three-help { color: var(--kilens-muted); margin-top: 3px; }
+.three-status,.three-render-status { width: fit-content; max-width: 100%; overflow-wrap: anywhere; background: var(--kilens-panel); padding: 3px 8px; border-radius: 3px; }
+.three-render-status { margin-top: 3px; color: var(--kilens-copper); }
 .three-details { pointer-events: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 25vh; overflow: auto; background: var(--kilens-panel); color: #ffc369; padding: 8px; margin: 4px 0; font: inherit; }
 .three-active kicanvas-embed { visibility: hidden; pointer-events: none; }
 .three-active .placement-editor,.three-active .pcb-display-controls,.three-active .selection-filter,.three-active .object-info,.three-active .object-picker,
