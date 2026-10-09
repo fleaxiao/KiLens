@@ -2,7 +2,7 @@
 	"name": "kilens",
 	"displayName": "KiLens",
 	"description": "Preview KiCad schematics and PCBs in 2D and 3D.",
-	"version": "1.1.5",
+	"version": "1.1.6",
 	"publisher": "fleaxiao",
 	"license": "MIT",
 	"icon": "icon.png",
