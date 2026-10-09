@@ -3,7 +3,9 @@ import { EnhancedRender } from './enhancedRender';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { VRMLLoader } from 'three/examples/jsm/loaders/VRMLLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { ModelReference, Pad3d, parseBoard3d, Point, SilkText3d } from './board3dData';
+import { ModelReference, Pad3d, parseBoard3d, Point } from './board3dData';
+import { textStrokes } from './strokeText';
+export { textStrokes } from './strokeText';
 
 interface Options {
     container: HTMLElement; source: string; workerUrl: string; wasmUrl: string;
@@ -12,7 +14,6 @@ interface Options {
     persist: (state: { position: number[]; target: number[] }) => void;
     enhanced?: boolean;
     persistEnhanced: (enabled: boolean) => void;
-    textStrokes: (text: SilkText3d) => Point[][];
 }
 const radians = THREE.MathUtils.degToRad;
 /** KiCad strokes have round ends, including where separate segments meet. */
@@ -94,6 +95,19 @@ export function placeModel(object: THREE.Object3D, ref: ModelReference, thicknes
     placement.add(object); footprint.add(placement);
     return footprint;
 }
+export function createModelPlaceholder(ref: ModelReference, thickness: number): THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial> {
+    const estimate = ref.placeholder!;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...estimate.size),
+        new THREE.MeshStandardMaterial({ color: estimate.color, roughness: 0.85 }));
+    // Footprint graphics already contain the back-side mirroring. Model-file
+    // rotations, unit corrections and offsets do not apply to these dimensions.
+    const center = new THREE.Vector2(estimate.center[0], -estimate.center[1]).rotateAround(new THREE.Vector2(), radians(ref.angle));
+    mesh.position.set(ref.position[0] + center.x, -ref.position[1] + center.y,
+        (ref.back ? -1 : 1) * (thickness / 2 + estimate.size[2] / 2 + 0.03));
+    mesh.rotation.z = radians(ref.angle);
+    mesh.userData.kilensPlaceholder = true;
+    return mesh;
+}
 /** A component WRL may include a CAD viewer's environment, not just geometry. */
 export function loadWrlModel(text: string): THREE.Object3D {
     if (!/^#VRML V2\.0/m.test(text)) throw new Error('Only VRML 2.0 models are supported.');
@@ -140,26 +154,27 @@ export function mount(options: Options) {
     renderer.domElement.setAttribute('aria-label', '3D PCB preview: drag to orbit, right-drag to pan, scroll to zoom');
     const scene = new THREE.Scene(), assembly = new THREE.Group(), models = new THREE.Group(), silkscreen = new THREE.Group();
     scene.add(assembly); assembly.add(models, silkscreen);
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x68715e, 2.5));
-    const light = new THREE.DirectionalLight(0xffffff, 3); light.position.set(50, -20, 100); scene.add(light);
-    const bottomLight = new THREE.DirectionalLight(0xffffff, 2); bottomLight.position.set(-30, 40, -70); scene.add(bottomLight);
+    // Brighter, slightly cool studio lighting lifts shadows and reduces the warm cast.
+    scene.add(new THREE.HemisphereLight(0xf0f5ff, 0x828b99, 3));
+    const light = new THREE.DirectionalLight(0xf4f7ff, 3.5); light.position.set(50, -20, 100); scene.add(light);
+    const bottomLight = new THREE.DirectionalLight(0xf4f7ff, 2.5); bottomLight.position.set(-30, 40, -70); scene.add(bottomLight);
     const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 1000); camera.up.set(0, 0, 1);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = false; controls.enabled = false;
     let disposed = false, active = true, interacting = false, modelsLoading = true, cameraInitialized = false;
-    let requestedView: string | undefined;
     let enhanced: EnhancedRender | undefined;
     const renderToggle = container.querySelector<HTMLInputElement>('[name=three-render]')!;
     renderToggle.checked = options.enhanced === true;
     const renderStatus = container.querySelector<HTMLElement>('.three-render-status')!;
     const boardShapes: THREE.Shape[] = [];
     const bounds = new THREE.Sphere(new THREE.Vector3(), 20);
+    const assemblyBounds = new THREE.Box3();
     const updateBounds = () => {
-        const box = new THREE.Box3().setFromObject(assembly);
-        if (!box.isEmpty()) box.getBoundingSphere(bounds);
+        assemblyBounds.setFromObject(assembly);
+        if (!assemblyBounds.isEmpty()) assemblyBounds.getBoundingSphere(bounds);
         enhanced?.invalidate();
     };
-    const raster = () => {
+    const draw = () => {
         if (disposed || !active || !cameraInitialized || document.hidden) return;
         updateCameraDepth(camera, bounds);
         try {
@@ -177,7 +192,6 @@ export function mount(options: Options) {
             renderer.render(scene, camera);
         }
     };
-    const draw = () => raster();
     controls.addEventListener('change', draw);
     controls.addEventListener('start', () => { interacting = true; draw(); });
     controls.addEventListener('end', () => {
@@ -191,7 +205,7 @@ export function mount(options: Options) {
     const edge = new THREE.MeshStandardMaterial({ color: 0xbba878, roughness: 0.85 });
     const copper = new THREE.MeshStandardMaterial({ color: 0xcdb77d, metalness: 0.5, roughness: 0.38, side: THREE.DoubleSide });
     const track = new THREE.MeshStandardMaterial({ color: 0x234c25, roughness: 0.6 });
-    const silk = new THREE.MeshStandardMaterial({ color: 0xf1eee3, roughness: 0.7 });
+    const silk = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.7 });
     green.userData.kilensSurface = 'soldermask'; track.userData.kilensSurface = 'soldermask';
     copper.userData.kilensSurface = 'copper'; silk.userData.kilensSurface = 'silkscreen';
     for (const material of [copper, track, silk]) material.userData.kilensArtwork = true;
@@ -248,7 +262,7 @@ export function mount(options: Options) {
     }
     for (const text of data.silkTexts) {
         try {
-            for (const points of options.textStrokes(text)) data.traces.push({ points, width: text.width, back: text.back, silk: true });
+            for (const points of textStrokes(text)) data.traces.push({ points, width: text.width, back: text.back, silk: true });
         } catch { data.warnings.push(`Unable to render silkscreen text: ${text.text}`); }
     }
     for (const polygon of data.silkPolygons) {
@@ -286,7 +300,6 @@ export function mount(options: Options) {
         if (merged) (material === silk ? silkscreen : assembly).add(new THREE.Mesh(merged, material));
         geometries.forEach(g => g.dispose()); originals.forEach(g => g.dispose());
     }
-    updateBounds();
     const resize = () => {
         if (!viewport.clientWidth || !viewport.clientHeight) return;
         renderer.setSize(viewport.clientWidth, viewport.clientHeight);
@@ -303,7 +316,20 @@ export function mount(options: Options) {
         controls.target.copy(center); controls.update(); draw();
         if (persist) options.persist({ position: camera.position.toArray(), target: controls.target.toArray() });
     };
+    const placeholders = new Map<number, ReturnType<typeof createModelPlaceholder>>();
+    for (const ref of data.models) {
+        if (!ref.placeholder || placeholders.has(ref.placeholder.footprint)) continue;
+        const placeholder = createModelPlaceholder(ref, data.thickness);
+        placeholders.set(ref.placeholder.footprint, placeholder); models.add(placeholder);
+    }
     resize();
+    updateBounds();
+    if (usableCameraState(options.state, bounds) && options.state) {
+        camera.position.fromArray(options.state.position); controls.target.fromArray(options.state.target); controls.update();
+    } else fit('iso');
+    cameraInitialized = true; controls.enabled = active;
+    renderer.domElement.style.visibility = 'visible';
+    draw();
     const listeners = new AbortController();
     renderToggle.addEventListener('change', () => {
         options.persistEnhanced(renderToggle.checked); renderStatus.hidden = true; draw();
@@ -312,8 +338,7 @@ export function mount(options: Options) {
         if (!document.hidden) draw();
     }, { signal: listeners.signal });
     container.querySelectorAll<HTMLButtonElement>('[data-three-view]').forEach(button => button.addEventListener('click', () => {
-        if (!cameraInitialized) requestedView = button.dataset.threeView;
-        else fit(button.dataset.threeView);
+        fit(button.dataset.threeView);
     }, { signal: listeners.signal }));
     container.querySelector<HTMLInputElement>('[name=three-models]')!.addEventListener('change', event => {
         models.visible = (event.target as HTMLInputElement).checked; enhanced?.invalidate(); draw();
@@ -388,13 +413,32 @@ export function mount(options: Options) {
     const messages = [...data.warnings];
     const report = () => {
         status.textContent = `Models: ${loaded}/${data.models.length}${failures.size ? ` · ${failures.size} file(s) unavailable` : ''}`;
-        status.hidden = !modelsLoading;
-        if (modelsLoading) status.textContent = 'Loading 3D models…';
-        details.textContent = [...messages, ...Array.from(failures, ([name, error]) => `${name}: ${error}`)].join('\n');
+        status.hidden = !modelsLoading && !placeholders.size;
+        if (modelsLoading) status.textContent = `Loading 3D models… ${loaded}/${data.models.length} loaded · ${placeholders.size} estimated component(s)`;
+        else if (placeholders.size) status.textContent += ` · ${placeholders.size} estimated component(s)`;
+        details.textContent = [...(placeholders.size ? ['Colored boxes estimate component size and color from footprint information.'] : []),
+            ...messages, ...Array.from(failures, ([name, error]) => `${name}: ${error}`)].join('\n');
         details.hidden = !details.textContent;
     };
     report();
     void (async () => {
+        // Read a small window ahead while the single STEP worker converts the
+        // current model. Deduplicate paths without buffering the whole library.
+        const indices = new Map<string, number>();
+        data.models.forEach((ref, index) => { if (!indices.has(ref.path)) indices.set(ref.path, index); });
+        const uniqueModels = [...indices];
+        type ReadResult = { response: Awaited<ReturnType<typeof requestModel>> } | { error: unknown };
+        const reads = new Map<string, Promise<ReadResult>>();
+        let nextRead = 0;
+        function prefetch() {
+            while (!disposed && reads.size < 2 && nextRead < uniqueModels.length) {
+                const [path, index] = uniqueModels[nextRead++];
+                reads.set(path, requestModel(index).then(response => ({ response }), error => ({ error })));
+            }
+        }
+        // Give the board and estimated bodies a frame before model decoding starts.
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        prefetch();
         for (const [index, ref] of data.models.entries()) {
             if (disposed) break;
             try {
@@ -402,8 +446,12 @@ export function mount(options: Options) {
                 let object = cache.get(ref.path);
                 if (!object) {
                     status.hidden = false;
-                    status.textContent = `Loading model ${index + 1}/${data.models.length}: ${ref.path}`;
-                    const response = await requestModel(index);
+                    status.textContent = `Loading model ${index + 1}/${data.models.length} · ${placeholders.size} estimated component(s): ${ref.path}`;
+                    const result = await reads.get(ref.path)!;
+                    reads.delete(ref.path);
+                    prefetch();
+                    if ('error' in result) throw result.error;
+                    const { response } = result;
                     if (disposed) break;
                     if (response.format === 'wrl') {
                         const text = new TextDecoder().decode(new Uint8Array(response.bytes));
@@ -412,20 +460,26 @@ export function mount(options: Options) {
                     cache.set(ref.path, object);
                 }
                 if (disposed) break;
-                models.add(placeModel(object.clone(true), ref, data.thickness)); loaded++; updateBounds(); enhanced?.invalidate(); draw();
+                const placed = placeModel(object.clone(true), ref, data.thickness);
+                models.add(placed); loaded++;
+                const key = ref.placeholder?.footprint;
+                const placeholder = key === undefined ? undefined : placeholders.get(key);
+                if (placeholder) {
+                    placeholder.removeFromParent(); placeholder.geometry.dispose(); placeholder.material.dispose();
+                    placeholders.delete(key!);
+                }
+                // Expand clipping bounds for the new geometry without traversing
+                // the complete board or moving the user's current camera.
+                assemblyBounds.union(new THREE.Box3().setFromObject(placed)); assemblyBounds.getBoundingSphere(bounds);
+                enhanced?.invalidate(); draw();
             } catch (error) { if (!disposed) failures.set(ref.path, String((error as Error).message ?? error)); }
             if (!disposed) report();
             await new Promise(resolve => setTimeout(resolve, 0));
         }
         modelsLoading = false;
         if (!disposed) {
-            // Establish the camera once against the complete assembly. Never show
-            // the board-only fit and then visibly recenter as models arrive.
-            if (!requestedView && usableCameraState(options.state, bounds) && options.state) {
-                camera.position.fromArray(options.state.position); controls.target.fromArray(options.state.target); controls.update();
-            } else fit(requestedView ?? 'iso');
-            cameraInitialized = true; controls.enabled = active;
-            renderer.domElement.style.visibility = 'visible';
+            // Tighten bounds once after replacement; keep the initial/user camera.
+            updateBounds();
             report(); enhanced?.invalidate(); draw();
         }
     })();
@@ -435,11 +489,11 @@ export function mount(options: Options) {
             const clearColor = renderer.getClearColor(new THREE.Color()), clearAlpha = renderer.getClearAlpha();
             try {
                 renderer.setClearColor(0x000000, 0);
-                raster();
+                draw();
                 return renderer.domElement.toDataURL('image/png');
             } finally {
                 renderer.setClearColor(clearColor, clearAlpha);
-                raster();
+                draw();
             }
         },
         setActive(value: boolean) { active = value; controls.enabled = value && cameraInitialized; interacting = false; if (value) { resize(); draw(); } },

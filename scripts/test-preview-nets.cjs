@@ -1,13 +1,6 @@
-const fs = require('node:fs');
-const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const ts = require('typescript');
-const context = { exports: {} };
-vm.createContext(context);
-vm.runInContext(ts.transpileModule(fs.readFileSync('src/web/kicadPcbEditor.ts', 'utf8'), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
-}).outputText, context);
-const { normalizePreviewNets } = context.exports;
+const { load } = require('./test-utils.cjs');
+const { normalizePreviewNets } = load('src/web/kicadPcbEditor.ts');
 const old = '(kicad_pcb (net 0 "") (net 1 "GND") (footprint "X" (pad "1" smd rect (net 1 "GND"))) (segment (net 1)))';
 assert.equal(normalizePreviewNets(old), old);
 const modern = '(kicad_pcb (footprint "X" (pad "1" smd rect (net "GND")) (pad "2" smd rect (net "/VIN")) (pad "3" smd rect (net ""))) (segment (net "GND")) (via (net "/VIN")) (zone (net "GND")))';

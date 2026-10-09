@@ -19,6 +19,7 @@ const vector = (list: List | undefined, fallback = 0): [number, number, number] 
 export interface ModelReference {
     path: string; position: Point; angle: number; back: boolean;
     offset: [number, number, number]; scale: [number, number, number]; rotation: [number, number, number];
+    placeholder?: { footprint: number; center: Point; size: [number, number, number]; color: number };
 }
 export function boardRoot(text: string): List {
     const board = children(parseDocument(text), 'kicad_pcb')[0];
@@ -26,16 +27,24 @@ export function boardRoot(text: string): List {
     return board;
 }
 export function modelReferences(text: string): ModelReference[] {
-    return children(boardRoot(text)).filter(f => ['footprint', 'module'].includes(head(f) ?? '')).flatMap(f =>
-        children(f, 'model').filter(m => !m.items.some(i => i.kind === 'atom' && i.value === 'hide')
-            && atom(childList(m, 'hide')) !== 'yes').map(m => {
+    return referencesFromBoard(boardRoot(text), false);
+}
+function referencesFromBoard(board: List, placeholders: boolean): ModelReference[] {
+    return children(board).filter(f => ['footprint', 'module'].includes(head(f) ?? '')).flatMap((f, footprint) => {
+        const models = children(f, 'model').filter(m => !m.items.some(i => i.kind === 'atom' && i.value === 'hide')
+            && atom(childList(m, 'hide')) !== 'yes');
+        if (!models.length) return [];
+        const placeholder = placeholders ? { footprint, ...estimateComponent(f) } : undefined;
+        return models.map(m => {
             const legacyOffset = childList(m, 'at');
             const offset = vector(childList(m, 'offset') ?? legacyOffset);
             if (legacyOffset && !childList(m, 'offset')) offset.forEach((v, i) => offset[i] = v * 25.4);
             return { path: atom(m), position: point(childList(f, 'at')), angle: number(childList(f, 'at'), 3),
                 back: atom(childList(f, 'layer')) === 'B.Cu', offset,
-                scale: vector(childList(m, 'scale'), 1), rotation: vector(childList(m, 'rotate')) };
-        }));
+                scale: vector(childList(m, 'scale'), 1), rotation: vector(childList(m, 'rotate')),
+                ...(placeholder ? { placeholder } : {}) };
+        });
+    });
 }
 
 export function arcPoints(a: Point, b: Point, c: Point): Point[] {
@@ -76,6 +85,67 @@ function graphicPoints(item: List): Point[] {
         return points.length ? [...points, points[0]] : [];
     }
     return [];
+}
+
+/** Footprint dimensions are physical millimetres, independent of model units/scale. */
+function estimateComponent(footprint: List): Omit<NonNullable<ModelReference['placeholder']>, 'footprint'> {
+    const fields = children(footprint, 'property').map(p => atom(p, 2));
+    const labels = [atom(footprint), ...fields, ...children(footprint, 'fp_text').map(p => atom(p, 2)),
+        ...children(footprint, 'model').map(m => atom(m))].join(' ');
+    const reference = children(footprint, 'property').find(p => atom(p).toLowerCase() === 'reference');
+    const ref = atom(reference, 2) || atom(children(footprint, 'fp_text').find(p => atom(p) === 'reference'), 2);
+    const electrolytic = /electrolytic|CP_|capacitor_(?:THT|SMD).*radial/i.test(labels);
+    const capacitor = electrolytic || /capacitor|\bC_\d/i.test(labels) || /^C\d/i.test(ref);
+    const resistor = /resistor|\bR_\d/i.test(labels) || /^R\d/i.test(ref);
+    const connector = /connector|terminal|pinheader|pinsocket|USB|RJ45/i.test(labels) || /^[JP]\d/i.test(ref);
+    const inductor = /inductor|transformer/i.test(labels) || /^[LT]\d/i.test(ref);
+    const diode = /diode|\bLED/i.test(labels) || /^D\d/i.test(ref);
+    const chip = /(?:QFN|QFP|SOIC|SOT|BGA|TSSOP|DIP)[-_\d]/i.test(labels) || /^[UQ]\d/i.test(ref);
+    const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+    function bounds(points: Point[]) {
+        const valid = points.filter(p => p.every(Number.isFinite));
+        if (!valid.length) return;
+        const xs = valid.map(p => p[0]), ys = valid.map(p => p[1]);
+        const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys);
+        if (right - left < 0.05 || bottom - top < 0.05) return;
+        return { center: [(left + right) / 2, (top + bottom) / 2] as Point, width: right - left, depth: bottom - top };
+    }
+    const graphics = children(footprint).filter(p => head(p)?.startsWith('fp_'));
+    const outline = (layer: string) => bounds(graphics.filter(p => atom(childList(p, 'layer')).endsWith(layer)).flatMap(graphicPoints));
+    let body = outline('.Fab');
+    // Explicit package dimensions are preferable to a clearance courtyard or pad span.
+    const dimensions = labels.match(/(?:^|[_\s-])(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(?:x(\d+(?:\.\d+)?))?mm/i);
+    const metric = labels.match(/(?:R|C)_\d{4}_(\d{4})Metric/i);
+    if (!body && dimensions) body = { center: [0, 0], width: +dimensions[1], depth: +dimensions[2] };
+    if (!body && metric) {
+        const code = metric[1];
+        body = { center: [0, 0], width: +code.slice(0, 2) / 10, depth: +code.slice(2) / 10 };
+    }
+    if (!body) {
+        body = outline('.CrtYd');
+        if (body) { body.width *= 0.85; body.depth *= 0.85; }
+    }
+    if (!body) {
+        const angle = number(childList(footprint, 'at'), 3);
+        body = bounds(children(footprint, 'pad').filter(p => atom(p, 2) !== 'np_thru_hole').flatMap(p => {
+            const at = point(childList(p, 'at')), size = point(childList(p, 'size'));
+            const a = (number(childList(p, 'at'), 3) - angle) * Math.PI / 180;
+            const w = (Math.abs(size[0] * Math.cos(a)) + Math.abs(size[1] * Math.sin(a))) / 2;
+            const h = (Math.abs(size[0] * Math.sin(a)) + Math.abs(size[1] * Math.cos(a))) / 2;
+            return [[at[0] - w, at[1] - h], [at[0] + w, at[1] + h]] as Point[];
+        }));
+        if (body) { body.width *= 0.85; body.depth *= 0.85; }
+    }
+    body ??= { center: [0, 0], width: connector ? 5 : 2, depth: connector ? 4 : 2 };
+    const small = Math.min(body.width, body.depth);
+    const explicitHeight = labels.match(/(?:^|[_\s-])H(\d+(?:\.\d+)?)mm/i)?.[1] ?? dimensions?.[3];
+    const height = explicitHeight ? +explicitHeight : electrolytic ? clamp(small * 1.6, 3, 30)
+        : connector ? clamp(small * 0.9, 2.5, 15) : inductor ? clamp(small * 0.7, 1.5, 15)
+            : resistor ? clamp(small * 0.4, 0.3, 2) : capacitor ? clamp(small * 0.65, 0.4, 4)
+                : chip ? clamp(small * 0.25, 0.8, 3) : clamp(small * 0.55, 0.6, 6);
+    const color = electrolytic ? 0x697580 : capacitor ? 0xb99563 : resistor ? 0x454850
+        : connector ? 0x547a8c : inductor ? 0x60584f : diode || chip ? 0x343842 : 0x7c8793;
+    return { center: body.center, size: [clamp(body.width, 0.2, 200), clamp(body.depth, 0.2, 200), clamp(height, 0.2, 80)], color };
 }
 export interface Pad3d { position: Point; size: Point; drill: Point; drillOffset: Point; angle: number; shape: string; ratio: number; front: boolean; back: boolean; }
 export interface SilkText3d {
@@ -218,5 +288,5 @@ export function parseBoard3d(text: string) {
     }
     if (!loops.length) warnings.add('No closed board outline: only pads, tracks and component models are shown.');
     return { thickness: Math.max(0.1, number(childList(childList(board, 'general') ?? board, 'thickness'), 1, 1.6)), loops, pads, traces, silkTexts, silkPolygons, copperPolygons,
-        models: modelReferences(text), warnings: [...warnings] };
+        models: referencesFromBoard(board, true), warnings: [...warnings] };
 }

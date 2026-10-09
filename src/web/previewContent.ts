@@ -10,7 +10,7 @@ export function getWebviewContent(
 	const isSchematic = documentPath.endsWith('.kicad_sch');
 	const scriptUri = webviewPanel.webview.asWebviewUri(
 		vscode.Uri.joinPath(extensionUri, 'media', 'kicanvas.js')
-	).with({ query: 'v=kicanvas-silktext-v1' });
+	).with({ query: 'v=kicanvas-2d-v2' });
 
 	const previewText = documentPath.endsWith('.kicad_pcb')
 		? normalizePreviewNets(document.getText()) : document.getText();
@@ -28,7 +28,7 @@ export function getWebviewContent(
 	return `<!DOCTYPE html>
 		<html>
 		<head>
-			<link rel="stylesheet" href="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'theme.css')).with({ query: 'v=12' })}">
+			<link rel="stylesheet" href="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'theme.css')).with({ query: 'v=15' })}">
 		</head>
 		<body>
 			<form class="placement-editor" aria-label="Footprint placement editor">
@@ -53,7 +53,7 @@ export function getWebviewContent(
 				<div class="placement-status" role="status"></div>
 			</form>
 			${isSchematic ? '' : `<button class="refresh-button net-toolbar-button" type="button" title="Net" aria-label="Net" aria-expanded="false" aria-controls="net-panel">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
 					<path d="M5 12h6M18 5h-7v14h7"></path>
 					<circle cx="3" cy="12" r="2"></circle>
 					<circle cx="20" cy="5" r="2"></circle>
@@ -63,14 +63,16 @@ export function getWebviewContent(
 			</button>
 			<div id="net-panel" class="pcb-display-controls" aria-label="Net visibility" hidden>
 			</div>`}
-			<button class="refresh-button" type="button" title="Refresh Preview" aria-label="Refresh Preview">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<path d="M20 11a8 8 0 1 0-2.34 5.66"></path>
-					<path d="M20 4v7h-7"></path>
+			<button class="refresh-button layers-toolbar-button${isSchematic ? ' schematic-layers' : ''}" type="button" title="Layers" aria-label="Layers" aria-expanded="false" aria-controls="layers-panel" disabled>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+					<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"></path>
 				</svg>
 			</button>
+			<section id="layers-panel" class="layers-panel" aria-label="Layer visibility" hidden>
+				<h3>Layers</h3><div class="layers-list"></div>
+			</section>
 			<button class="refresh-button export-image-button" type="button" title="Export image (PNG)" aria-label="Export image">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
 					<rect x="3" y="3" width="18" height="18" rx="2"></rect>
 					<path d="m3 17 6-6 4 4 3-3 5 5"></path>
 					<circle cx="8" cy="8" r="1.5"></circle>
@@ -78,14 +80,12 @@ export function getWebviewContent(
 			</button>
 			<div class="export-image-status" role="status" hidden></div>
 			<button class="refresh-button cycle-view-button" type="button" title="Switch view (Space)" aria-label="Switch view" aria-keyshortcuts="Space" disabled>
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<path d="M8 7V3h13v13h-4"></path>
-					<rect x="3" y="7" width="14" height="14" rx="2"></rect>
-					<path d="M6 14h8m-3-3 3 3-3 3"></path>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+					<path data-view-icon d="M4 14h6v6m-7 1 7-7M20 10h-6V4m7-1-7 7"></path>
 				</svg>
 			</button>
-			${isSchematic ? '' : `<button class="refresh-button copper-toolbar-button" type="button" title="铜层交替：F.Cu / B.Cu" aria-label="铜层交替" aria-pressed="false" disabled>
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+			${isSchematic ? '' : `<button class="refresh-button copper-toolbar-button" type="button" title="Swap copper layers (F.Cu / B.Cu)" aria-label="Swap copper layers" aria-pressed="false" disabled>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
 					<path d="M4 5h16M4 19h16M9 15V9l-2 2m2-2 2 2M15 9v6l-2-2m2 2 2-2"></path>
 				</svg>
 			</button>`}
@@ -106,11 +106,12 @@ export function getWebviewContent(
 				<pre class="three-details" hidden></pre>
 				</div>
 			</section>
-			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'preview3d-controls.js')).with({ query: 'v=enhanced-3' })}"></script>`}
+			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'preview3d-controls.js')).with({ query: 'v=standalone-3d-1' })}"></script>`}
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'export-image.js')).with({ query: 'v=3' })}"></script>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'connectivity.js')).with({ query: 'v=5' })}"></script>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'ratsnest.js')).with({ query: 'v=9' })}"></script>
 			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'selection.js')).with({ query: 'v=6' })}"></script>
+			<script src="${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'layers.js'))}"></script>
 			<script type="module" src="${scriptUri}"></script>
 			<kicanvas-embed theme="kicad" controls="basic" controlslist="nooverlay noflipview nodownload">
 				<kicanvas-source name="${documentName}">${documentSource}</kicanvas-source>
@@ -123,7 +124,7 @@ export function getWebviewContent(
 				let savedState = vscode.getState() ?? {};
 				let currentZoomMode = isSchematicDocument
 					? 'zoom_to_schematic'
-					: 'zoom_to_page';
+					: 'zoom_to_all';
 				let selectedFootprint = null;
 
 				const placementEditor = document.querySelector('.placement-editor');
@@ -134,9 +135,6 @@ export function getWebviewContent(
 				const placementRotation = placementEditor?.querySelector('input[name="placement-rotation"]');
 				const placementButtons = Array.from(placementEditor?.querySelectorAll('button') ?? []);
 
-				document.querySelector('.refresh-button[aria-label="Refresh Preview"]')?.addEventListener('click', () => {
-					vscode.postMessage({ type: 'refresh' });
-				});
 				const netButton = document.querySelector('.net-toolbar-button');
 				const netPanel = document.querySelector('#net-panel');
 				function setNetPanelOpen(open) {
@@ -170,8 +168,12 @@ export function getWebviewContent(
 					vscode.setState(savedState);
 				}
 
+				const layerControls = KiLensLayers.install({ visibility: savedState.layerVisibility,
+					persist: layerVisibility => setPersistentState({ layerVisibility }) });
 				const threeControls = isSchematicDocument ? null : KiLens3DControls.install({
 					vscode, savedState, persist: setPersistentState,
+					source: ${JSON.stringify(document.getText()).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')},
+					set2dActive: active => { if (embed) embed.inert = !active; if (!active) layerControls.close(); },
 					bundleUrl: '${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', '3d', 'preview3d.js'))}',
 					workerUrl: '${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', '3d', 'step-worker.js'))}',
 					wasmUrl: '${webviewPanel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', '3d', 'occt-import-js.wasm'))}'
@@ -222,7 +224,7 @@ export function getWebviewContent(
 					wrapLayers(viewer.layers);
 					function update() {
 						button.setAttribute('aria-pressed', String(swapped));
-						button.title = '铜层交替：' + (swapped ? 'B.Cu' : 'F.Cu') + ' 在上，点击互换';
+						button.title = 'Swap copper layers: ' + (swapped ? 'B.Cu' : 'F.Cu') + ' on top. Click to swap.';
 						viewer.draw();
 					}
 					button.disabled = false;
@@ -400,12 +402,11 @@ export function getWebviewContent(
 						return;
 					}
 
+					layerControls.attach(viewer);
 					await setupSchematicZoomControl();
 					await setupCycleViewControl();
 					if (!restoreViewerState(viewer)) {
-						await applyZoomMode(isSchematicDocument
-							? 'zoom_to_schematic'
-							: 'zoom_to_page');
+						await applyZoomMode(currentZoomMode);
 					}
 					if (!viewer.board) {
 						return;
@@ -463,10 +464,10 @@ export function getWebviewContent(
 					return [];
 				}
 
-				function zoomSchematicToContents() {
+				function zoomToContents() {
 					const viewer = getViewer();
 					const camera = viewer?.viewport?.camera;
-					if (!viewer?.schematic || !camera) {
+					if (!viewer?.layers || !camera) {
 						return false;
 					}
 
@@ -482,8 +483,12 @@ export function getWebviewContent(
 						':Symbol:Pin',
 						':Symbol:Background'
 					];
-					const bounds = contentLayerNames
-						.map(name => viewer.layers?.by_name?.(name)?.bbox)
+					const contentLayers = viewer.board
+						? [...viewer.layers.in_order()].filter(layer => ![':Grid', ':Interactive', ':Overlay'].includes(layer.name))
+						: contentLayerNames.map(name => viewer.layers.by_name(name));
+					const bounds = contentLayers
+						.filter(layer => layer?.visible)
+						.map(layer => layer.bbox)
 						.filter(bbox => bbox?.valid);
 					if (bounds.length === 0) {
 						viewer.zoom_to_page?.();
@@ -526,15 +531,20 @@ export function getWebviewContent(
 					schematicButton.addEventListener('click', event => {
 						event.preventDefault();
 						event.stopImmediatePropagation();
-						zoomSchematicToContents();
+						zoomToContents();
 						currentZoomMode = 'zoom_to_schematic';
 					}, { capture: true });
 				}
 
 				function updateCycleViewControl() {
-					const names = { zoom_to_page: 'Page', zoom_to_edge_cuts: 'Board', zoom_to_selection: 'Selection', zoom_to_schematic: 'Schematic' };
+					const names = { zoom_to_all: 'All elements', zoom_to_page: 'Page', zoom_to_edge_cuts: 'Board', zoom_to_selection: 'Selection', zoom_to_schematic: 'Schematic' };
 					const button = document.querySelector('.cycle-view-button');
-					button.title = 'Switch view (Space) · Current: ' + names[currentZoomMode];
+					const focusBoard = !isSchematicDocument && currentZoomMode === 'zoom_to_all';
+					button.querySelector('[data-view-icon]').setAttribute('d', focusBoard
+						? 'M4 14h6v6m-7 1 7-7M20 10h-6V4m7-1-7 7'
+						: 'M15 3h6v6m0-6-7 7M9 21H3v-6m0 6 7-7');
+					button.title = (isSchematicDocument ? 'Switch view' : focusBoard ? 'Show Board' : 'Show All elements')
+						+ ' (Space) · Current: ' + names[currentZoomMode];
 					button.dataset.view = currentZoomMode;
 				}
 
@@ -557,8 +567,9 @@ export function getWebviewContent(
 					}
 
 					switch (modeName) {
+						case 'zoom_to_all':
 						case 'zoom_to_schematic':
-							return zoomSchematicToContents();
+							return zoomToContents();
 						case 'zoom_to_page':
 							viewer.zoom_to_page?.();
 							return true;
@@ -591,6 +602,10 @@ export function getWebviewContent(
 				}
 
 				async function cycleZoomMode() {
+					if (!isSchematicDocument) {
+						await applyZoomMode(currentZoomMode === 'zoom_to_all' ? 'zoom_to_edge_cuts' : 'zoom_to_all');
+						return;
+					}
 					const buttons = (await waitForZoomControls()).filter(isButtonEnabled);
 					const modes = buttons.map(button => button.name);
 

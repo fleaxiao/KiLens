@@ -140,7 +140,7 @@
         filterButton.setAttribute('aria-label', 'Selection filters');
         filterButton.setAttribute('aria-controls', panel.id);
         filterButton.setAttribute('aria-expanded', 'false');
-        filterButton.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18l-7 8v7l-4 2v-9z"></path></svg>';
+        filterButton.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h18l-7 8v7l-4 2v-9z"></path></svg>';
         document.body.append(filterButton);
         const netButton = document.querySelector('.net-toolbar-button');
         function openFilters(open) {

@@ -1,42 +1,9 @@
 const fs = require('node:fs');
-const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const ts = require('typescript');
 const { chromium } = require('playwright');
 
-const board = `(kicad_pcb (version 20240108) (generator pcbnew)
-  (general (thickness 1.6)) (paper "A4")
-  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
-  (setup (pad_to_mask_clearance 0)) (net 0 "") (net 1 "SIGNAL") (net 2 "UNUSED")
-  (gr_rect (start 5 5) (end 45 35) (stroke (width 0.05) (type default)) (fill none) (layer "Edge.Cuts"))
-  (segment (start 20 12) (end 25 12) (width 0.25) (layer "F.Cu") (net 1))
-  (via (at 30 15) (size 1) (drill 0.5) (layers "F.Cu" "B.Cu") (net 1))
-  (gr_text "Location" (at 25 25) (layer "F.Cu") (effects (font (size 1 1) (thickness 0.15))))
-  (footprint "Test" (layer "F.Cu") (at 10 10) (uuid "pad-a")
-    (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SIGNAL")))
-  (footprint "Test" (layer "F.Cu") (at 40 30) (uuid "pad-b")
-    (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SIGNAL")))
-)`;
-
-function html(source) {
-    const uri = path => ({ path, fsPath: path, with() { return this; }, toString() { return this.path; } });
-    const vscode = { Uri: { joinPath: (base, ...parts) => uri(base.path + '/' + parts.join('/')) } };
-    const editor = { exports: {} };
-    vm.createContext(editor);
-    vm.runInContext(ts.transpileModule(fs.readFileSync('src/web/kicadPcbEditor.ts', 'utf8'), {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
-    }).outputText, editor);
-    const context = { exports: {}, require: name => name === 'vscode' ? vscode : editor.exports, URL };
-    vm.createContext(context);
-    vm.runInContext(ts.transpileModule(fs.readFileSync('src/web/previewContent.ts', 'utf8'), {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
-    }).outputText, context);
-    return context.exports.getWebviewContent(
-        uri('https://kilens.test'),
-        { uri: uri('/fixture.kicad_pcb'), getText: () => source },
-        { webview: { asWebviewUri: value => value } }
-    );
-}
+const { previewHtml: html } = require('./test-utils.cjs');
+const board = fs.readFileSync('scripts/fixtures/preview.kicad_pcb', 'utf8');
 
 (async () => {
     const browser = await chromium.launch({ headless: true, args: ['--disable-logging'] });
@@ -48,7 +15,8 @@ function html(source) {
         const errors = [];
         page.on('pageerror', e => errors.push(e.message));
         page.on('console', m => { if (m.type() === 'error') console.log('console:', m.text()); });
-        await page.addInitScript(() => { window.acquireVsCodeApi = () => ({ getState: () => ({}), setState(value) { window.savedPreviewState = value; }, postMessage() {} }); });
+        await page.addInitScript(() => { window.acquireVsCodeApi = () => ({ getState: () => JSON.parse(sessionStorage.getItem('state') || '{}'),
+            setState(value) { window.savedPreviewState = value; sessionStorage.setItem('state', JSON.stringify(value)); }, postMessage() {} }); });
         await page.route('**/*', route => {
             const url = new URL(route.request().url());
             if (url.hostname === 'fonts.googleapis.com') return route.fulfill({ body: '', contentType: 'text/css' });
@@ -64,7 +32,42 @@ function html(source) {
             return route.fulfill({ body: html(process.argv[2] ? fs.readFileSync(process.argv[2], 'utf8') : board), contentType: 'text/html; charset=utf-8' });
         });
         await page.goto('https://kilens.test/');
-        await page.waitForFunction(() => document.querySelector('input[type=checkbox]'));
+        await page.waitForFunction(() => document.querySelector('input[name="visible-net"]'));
+        assert.equal(await page.locator('.cycle-view-button').getAttribute('data-view'), 'zoom_to_all', 'New PCB opens with all elements in view');
+        if (!process.argv[2]) assert.ok(await page.evaluate(() => {
+            const viewer = getViewer(), camera = viewer.viewport.camera;
+            const Point = camera.center.constructor;
+            return [[5, 5], [45, 35], [350, 60], [365, 60]].every(([x, y]) => {
+                const screen = camera.world_to_screen(new Point(x, y));
+                return screen.x >= 0 && screen.y >= 0 && screen.x <= viewer.canvas.clientWidth && screen.y <= viewer.canvas.clientHeight;
+            });
+        }), 'Default framing includes both the board and artwork beyond the page boundary');
+        const layersButton = page.getByRole('button', { name: 'Layers', exact: true });
+        assert.equal(await page.evaluate(() => getViewer().layers.by_name(':DrawingSheet').visible), false, 'Page starts hidden');
+        await layersButton.click();
+        const pageLayer = page.getByRole('checkbox', { name: 'Page', exact: true });
+        const frontLayer = page.getByRole('checkbox', { name: 'F.Cu', exact: true });
+        assert.equal(await pageLayer.isChecked(), false);
+        assert.ok(await page.evaluate(() => {
+            const a = document.querySelector('.layers-toolbar-button').getBoundingClientRect();
+            const b = document.querySelector('.copper-toolbar-button').getBoundingClientRect();
+            return a.width === 34 && a.height === 34 && a.top === 8 && b.right + 4 === a.left;
+        }), 'Layers uses the shared toolbar size and spacing');
+        await pageLayer.check(); await frontLayer.uncheck();
+        await page.evaluate(() => { getViewer().paint(); getViewer().draw(); });
+        assert.deepEqual(await page.evaluate(() => ['F.Cu', ':F.Cu:Zones', ':Pads:Front'].map(n => getViewer().layers.by_name(n).visible)),
+            [false, false, false], 'Hiding copper also hides its dependent layers after repaint');
+        await page.reload();
+        await page.waitForFunction(() => document.querySelector('input[name="visible-net"]'));
+        await layersButton.click();
+        assert.equal(await pageLayer.isChecked(), true, 'Page choice survives reload');
+        assert.equal(await frontLayer.isChecked(), false, 'Copper visibility survives reload');
+        await pageLayer.uncheck(); await frontLayer.check();
+        fs.mkdirSync('dist/test-output', { recursive: true });
+        await page.screenshot({ path: 'dist/test-output/layers-panel.png' });
+        await page.keyboard.press('Escape');
+        assert.equal(await page.locator('#layers-panel').isVisible(), false);
+        assert.equal(await layersButton.evaluate(button => document.activeElement === button), true);
         console.log('Initial:', JSON.stringify(await page.evaluate(() => ({
             errors: null,
             embed: !!document.querySelector('kicanvas-embed')?.shadowRoot,
@@ -76,7 +79,7 @@ function html(source) {
             checkboxes: document.querySelectorAll('input[type=checkbox]').length
         }))), 'errors:', errors);
         const netButton = page.getByRole('button', { name: 'Net', exact: true });
-        const copperButton = page.getByRole('button', { name: '铜层交替', exact: true });
+        const copperButton = page.getByRole('button', { name: 'Swap copper layers', exact: true });
         const layerOrder = () => page.evaluate(() => [...getViewer().layers.in_display_order()].map(layer => layer.name));
         const initialOrder = await layerOrder();
         await copperButton.click();
@@ -102,8 +105,8 @@ function html(source) {
         assert.equal(await page.locator('kc-ui-button[name="flip_view"]').count(), 0, 'Flip button is removed');
         assert.equal(await page.locator('kc-ui-button[name="download"]').count(), 0, 'Download button is removed');
         assert.ok(await page.evaluate(() => {
-            const refresh = document.querySelector('.refresh-button:not(.net-toolbar-button)').getBoundingClientRect();
-            return refresh.top === 8 && innerWidth - refresh.right === 8;
+            const mode = document.querySelector('.three-toolbar-button').getBoundingClientRect();
+            return mode.top === 8 && innerWidth - mode.right === 8;
         }), 'Remaining toolbar buttons align to the right edge');
         assert.equal(await page.locator('.pcb-display-controls').isVisible(), false, 'Net panel starts collapsed');
         await netButton.click();
@@ -111,9 +114,8 @@ function html(source) {
         assert.ok(await page.evaluate(() => {
             const net = document.querySelector('.net-toolbar-button').getBoundingClientRect();
             const mode = document.querySelector('.three-toolbar-button').getBoundingClientRect();
-            const refresh = document.querySelector('[aria-label="Refresh Preview"]').getBoundingClientRect();
-            return net.top === refresh.top && net.height === refresh.height && net.right + 4 === mode.left && mode.right + 4 === refresh.left;
-        }), '3D sits between Net and Refresh in the toolbar');
+            return net.top === mode.top && net.height === mode.height && net.right + 4 === mode.left;
+        }), 'Net and 3D remain adjacent at the right edge');
         await page.keyboard.press('Escape');
         assert.equal(await page.locator('.pcb-display-controls').isVisible(), false);
         await netButton.click();

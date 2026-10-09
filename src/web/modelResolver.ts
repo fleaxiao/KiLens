@@ -4,7 +4,7 @@ import { modelReferences } from './board3dData';
 const maximumBytes = 40 * 1024 * 1024;
 const referenceCache = new WeakMap<vscode.TextDocument, { version: number; references: ReturnType<typeof modelReferences> }>();
 let windowsLibraries: { expires: number; result: Promise<vscode.Uri[]> } | undefined;
-type NativeDiscovery = (reference: string) => Promise<{ variables: Record<string, string>; roots: string[] }>;
+type NativeDiscovery = (reference: string, includeInstallations?: boolean) => Promise<{ variables: Record<string, string>; roots: string[] }>;
 let nativeDiscovery: NativeDiscovery | undefined;
 export function setNativeModelDiscovery(discovery: NativeDiscovery): void { nativeDiscovery = discovery; }
 
@@ -55,18 +55,76 @@ export async function readModel(document: vscode.TextDocument, index: number) {
     const directory = vscode.Uri.joinPath(document.uri, '..');
     const config = vscode.workspace.getConfiguration('kilens', document.uri);
     const configuredVariables = config.get<Record<string, string>>('modelPathVariables', {});
-    const native = vscode.workspace.isTrusted && nativeDiscovery
-        ? await nativeDiscovery(reference.path + '\n' + Object.values(configuredVariables).join('\n')).catch(() => ({ variables: {}, roots: [] }))
-        : { variables: {}, roots: [] };
-    const variables = { ...native.variables, ...configuredVariables };
-    for (const key of Object.keys(variables)) {
-        for (let i = 0; i < 8; i++) {
-            const next = variables[key].replace(/\$\{([^}]+)\}/g, (all, name: string) => variables[name] || all);
-            if (next === variables[key]) break;
-            variables[key] = next;
+    const configured = config.get<string[]>('modelSearchPaths', []).map(pathUri);
+    const project = vscode.workspace.getWorkspaceFolder(document.uri)?.uri ?? directory;
+    const originalPath = reference.path.replace(/\\/g, '/');
+    if (!/\.(step|stp|wrl)$/i.test(originalPath)) throw new Error('Only STEP, STP and VRML 2.0 (.wrl) models are supported.');
+    const library = originalPath.match(/^\$\{(KICAD\d*_3DMODEL_DIR|KISYS3DMOD)\}\/(.*)$/);
+    const tried = new Set<string>();
+    const denied = new Set<string>();
+    let unresolved = false;
+
+    async function search(roots: vscode.Uri[], nativeVariables: Record<string, string> = {}, deferUnresolvedExplicit = false) {
+        const variables = { ...nativeVariables, ...configuredVariables };
+        for (const key of Object.keys(variables)) {
+            for (let i = 0; i < 8; i++) {
+                const next = variables[key].replace(/\$\{([^}]+)\}/g, (all, name: string) => variables[name] || all);
+                if (next === variables[key]) break;
+                variables[key] = next;
+            }
+        }
+        const resolvedPath = originalPath.replace(/\$\{([^}]+)\}/g, (all, name: string) =>
+            name === 'KIPRJMOD' ? directory.toString() : variables[name] || all);
+        unresolved = resolvedPath.includes('${');
+        const candidates: vscode.Uri[] = [];
+        if (library) {
+            // Explicit variables may depend on native variables. Resolve those
+            // before trying lower-priority configured search directories.
+            if (deferUnresolvedExplicit && configuredVariables[library[1]] && unresolved) return;
+            const resolved = !unresolved ? pathUri(resolvedPath) : undefined;
+            if (resolved && configuredVariables[library[1]]) candidates.push(resolved);
+            candidates.push(...configured.map(root => vscode.Uri.joinPath(root, library[2])));
+            if (resolved && !configuredVariables[library[1]]) candidates.push(resolved);
+            candidates.push(...roots.map(root => vscode.Uri.joinPath(root, library[2])));
+        } else if (unresolved) return;
+        else if (/^(?:[a-z]:\/|\/|[a-z][a-z\d+.-]*:\/\/)/i.test(resolvedPath)) candidates.push(pathUri(resolvedPath));
+        else {
+            candidates.push(vscode.Uri.joinPath(directory, resolvedPath));
+            candidates.push(...roots.map(root => vscode.Uri.joinPath(root, resolvedPath)));
+        }
+        const allowedRoots = [project, directory];
+        if (vscode.workspace.isTrusted) allowedRoots.push(...roots, ...Object.values(variables).filter(Boolean).map(pathUri));
+        for (const uri of candidates) {
+            const key = uri.toString();
+            if (!allowedRoots.some(root => inside(uri, root))) { denied.add(key); continue; }
+            denied.delete(key);
+            if (tried.has(key)) continue;
+            tried.add(key);
+            let stat: vscode.FileStat;
+            try { stat = await vscode.workspace.fs.stat(uri); } catch { continue; }
+            if (stat.type !== vscode.FileType.File) continue;
+            if (stat.size > maximumBytes) throw new Error('Model exceeds the 40 MB preview limit.');
+            const bytes = await vscode.workspace.fs.readFile(uri);
+            if (bytes.byteLength > maximumBytes) throw new Error('Model exceeds the 40 MB preview limit.');
+            return { bytes: Array.from(bytes), format: /\.wrl$/i.test(uri.path) ? 'wrl' : 'step' };
         }
     }
-    const configured = config.get<string[]>('modelSearchPaths', []).map(pathUri);
+
+    // Explicit paths should not wait for OS settings, registry queries or drive scans.
+    let result = await search(configured, {}, true);
+    if (result) return result;
+    const discoveryReference = reference.path + '\n' + Object.values(configuredVariables).join('\n');
+    const discover = (installations: boolean) => vscode.workspace.isTrusted && nativeDiscovery
+        ? nativeDiscovery(discoveryReference, installations).catch(() => ({ variables: {}, roots: [] }))
+        : Promise.resolve({ variables: {}, roots: [] });
+    const native = await discover(false);
+    result = await search([...configured, ...native.roots.map(pathUri)], native.variables);
+    if (result) return result;
+    if (unresolved && !library) throw new Error(`Unresolved path variable in ${reference.path}. Configure kilens.modelPathVariables.`);
+
+    const installations = await discover(true);
+    result = await search([...configured, ...installations.roots.map(pathUri)], installations.variables);
+    if (result) return result;
     const defaults = [
         ...['10.0', '9.0', '8.0', '7.0'].map(v => vscode.Uri.file(`C:/Program Files/KiCad/${v}/share/kicad/3dmodels`)),
         vscode.Uri.file('/usr/share/kicad/3dmodels'), vscode.Uri.file('/usr/local/share/kicad/3dmodels'),
@@ -76,44 +134,10 @@ export async function readModel(document: vscode.TextDocument, index: number) {
     const discovered = await discoverWindowsLibraries(document);
     const requestedVersion = reference.path.match(/\$\{KICAD(\d+)_3DMODEL_DIR\}/)?.[1];
     const matchesVersion = (uri: vscode.Uri) => requestedVersion && uri.path.includes(`/${requestedVersion}.0/`) ? 1 : 0;
-    const roots = [...configured, ...native.roots.map(pathUri), ...[...discovered, ...defaults].sort((a, b) => matchesVersion(b) - matchesVersion(a))];
-    const project = vscode.workspace.getWorkspaceFolder(document.uri)?.uri ?? directory;
-    let path = reference.path.replace(/\\/g, '/');
-    if (!/\.(step|stp|wrl)$/i.test(path)) throw new Error('Only STEP, STP and VRML 2.0 (.wrl) models are supported.');
-    const candidates: vscode.Uri[] = [];
-    const library = path.match(/^\$\{(?:KICAD\d*_3DMODEL_DIR|KISYS3DMOD)\}[/\\](.*)$/);
-    path = path.replace(/\$\{([^}]+)\}/g, (all, name: string) => {
-        if (name === 'KIPRJMOD') return directory.toString();
-        return variables[name] || all;
-    });
-    if (library) {
-        const variableName = reference.path.match(/^\$\{([^}]+)\}/)![1];
-        const resolved = !path.includes('${') ? pathUri(path) : undefined;
-        if (resolved && configuredVariables[variableName]) candidates.push(resolved);
-        candidates.push(...configured.map(root => vscode.Uri.joinPath(root, library[1])));
-        if (resolved && !configuredVariables[variableName]) candidates.push(resolved);
-        candidates.push(...roots.map(root => vscode.Uri.joinPath(root, library[1])));
-    }
-    else if (path.includes('${')) throw new Error(`Unresolved path variable in ${reference.path}. Configure kilens.modelPathVariables.`);
-    else if (/^(?:[a-z]:\/|\/|[a-z][a-z\d+.-]*:\/\/)/i.test(path)) candidates.push(pathUri(path));
-    else {
-        candidates.push(vscode.Uri.joinPath(directory, path));
-        candidates.push(...roots.map(root => vscode.Uri.joinPath(root, path)));
-    }
-    const allowedRoots = [project, directory];
-    if (vscode.workspace.isTrusted) allowedRoots.push(...roots, ...Object.values(variables).filter(Boolean).map(pathUri));
-    let denied = false;
-    for (const uri of candidates) {
-        if (!allowedRoots.some(root => inside(uri, root))) { denied = true; continue; }
-        let stat: vscode.FileStat;
-        try { stat = await vscode.workspace.fs.stat(uri); } catch { continue; }
-        if (stat.type !== vscode.FileType.File) continue;
-        if (stat.size > maximumBytes) throw new Error('Model exceeds the 40 MB preview limit.');
-        const bytes = await vscode.workspace.fs.readFile(uri);
-        if (bytes.byteLength > maximumBytes) throw new Error('Model exceeds the 40 MB preview limit.');
-        return { bytes: Array.from(bytes), format: /\.wrl$/i.test(uri.path) ? 'wrl' : 'step' };
-    }
-    throw new Error(denied
+    result = await search([...configured, ...installations.roots.map(pathUri),
+        ...[...discovered, ...defaults].sort((a, b) => matchesVersion(b) - matchesVersion(a))], installations.variables);
+    if (result) return result;
+    throw new Error(denied.size
         ? 'Model is outside the allowed folders. Trust this workspace and add its folder to kilens.modelSearchPaths.'
         : 'Model file not found in the configured or detected libraries. Install the KiCad 3D model library, or configure kilens.modelSearchPaths in VS Code settings.');
 }

@@ -3,13 +3,12 @@ window.KiLens3DControls = {
     install(options) {
         const button = document.querySelector('.three-toolbar-button');
         const panel = document.querySelector('.three-panel');
-        const embed = document.querySelector('kicanvas-embed');
         let mounted, loading, opened = false;
         async function toggle(open) {
             opened = open;
             panel.hidden = !open;
             document.body.classList.toggle('three-active', open);
-            embed.inert = open;
+            options.set2dActive?.(!open);
             button.setAttribute('aria-pressed', String(open));
             options.persist({ preview3d: open });
             if (!open) { mounted?.setActive(false); button.focus(); return; }
@@ -25,16 +24,12 @@ window.KiLens3DControls = {
                     script.onerror = () => { script.remove(); reject(new Error('Unable to load bundled 3D viewer.')); };
                     document.head.append(script);
                 });
-                const fontDeadline = Date.now() + 10000;
-                while (!window.KiLensStrokeText && Date.now() < fontDeadline) await new Promise(resolve => setTimeout(resolve, 25));
-                if (!window.KiLensStrokeText) throw new Error('The bundled silkscreen font did not load');
                 mounted = window.KiLens3D.mount({
                     container: panel,
-                    source: document.querySelector('kicanvas-source').textContent,
+                    source: options.source,
                     workerUrl: options.workerUrl, wasmUrl: options.wasmUrl,
                     postMessage: message => options.vscode.postMessage(message),
                     state: options.savedState.camera3d,
-                    textStrokes: window.KiLensStrokeText,
                     persist: camera3d => options.persist({ camera3d }),
                     enhanced: options.savedState.enhanced3d === true,
                     persistEnhanced: enhanced3d => options.persist({ enhanced3d })
@@ -82,7 +77,7 @@ window.KiLens3DControls = {
         if (options.savedState.preview3d) void toggle(true);
         return {
             captureImage() {
-                if (!mounted || !opened) throw new Error('3D 预览尚未加载完成，请稍后重试。');
+                if (!mounted || !opened) throw new Error('The 3D preview is still loading. Please try again shortly.');
                 return mounted.captureImage();
             }
         };

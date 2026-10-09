@@ -1,7 +1,7 @@
 KiLens
 
 KiLens is a Visual Studio Code extension for previewing KiCad schematic and
-PCB files with KiCanvas.
+PCB files with KiCanvas for 2D and an independent Three.js 3D renderer.
 
 KiLens is based on KiCode by Sajad Ghorbani.
 
@@ -9,7 +9,7 @@ Original work copyright (c) 2025 Sajad Ghorbani.
 Modifications copyright (c) 2026 fleaxiao.
 
 KiLens is licensed under the MIT License. The full license text is included in
-LICENSE.txt.
+LICENSE (packaged as LICENSE.txt in the VSIX).
 
 Third-party notices
 -------------------
@@ -49,9 +49,13 @@ https://gitlab.com/kicad/code/kicad/-/tree/master/resources/linux/icons/hicolor/
 3D preview
 ----------
 
-The KiCanvas bundle includes a KiLens adapter exposing its existing Newstroke
-font to the 3D silkscreen renderer. Reproduced by
-scripts/patch-kicanvas-stroke-text.cjs; the original font data is unchanged.
+The 3D renderer includes a standalone Newstroke decoder and text layout module
+in src/web/strokeText.ts, adapted from KiCanvas's MIT-licensed font implementation.
+See media/3d/LICENSE.kicanvas for its copyright and permission notice.
+The original glyph data is preserved in src/web/fonts/newstrokeData.ts, with
+its source bundle hash recorded there. No KiCanvas bundle is read or loaded
+by the 3D build or renderer. See media/3d/LICENSE.newstroke for upstream font
+attribution and license notices, including the CJK glyph terms.
 
 Three.js 0.180.0 (including OrbitControls and VRMLLoader), MIT license.
 Copyright (c) 2010-2025 three.js authors. See media/3d/LICENSE.three.

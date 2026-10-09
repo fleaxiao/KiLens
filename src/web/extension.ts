@@ -52,7 +52,7 @@ class PreviewProvider implements vscode.CustomTextEditorProvider {
 		const messageSubscription = webviewPanel.webview.onDidReceiveMessage(message => {
 			if (message?.type === 'exportPreviewImage' && typeof message.requestId === 'string') {
 				if (exportingImage) {
-					void webviewPanel.webview.postMessage({ type: 'exportPreviewImageResult', requestId: message.requestId, error: '请先完成已打开的图片保存对话框。' });
+					void webviewPanel.webview.postMessage({ type: 'exportPreviewImageResult', requestId: message.requestId, error: 'Please finish the open image save dialog first.' });
 					return;
 				}
 				exportingImage = true;

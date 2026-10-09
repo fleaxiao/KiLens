@@ -1,24 +1,9 @@
 const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const ts = require('typescript');
 const { URI, Utils } = require('vscode-uri');
 const { chromium } = require('playwright');
 
-function load(name, mocks = {}, cache = new Map()) {
-    if (cache.has(name)) return cache.get(name);
-    const exports = {};
-    cache.set(name, exports);
-    const context = { exports, console, URL, process, setTimeout, clearTimeout, require: module => {
-        if (mocks[module]) return mocks[module];
-        return module.startsWith('.') ? load(path.posix.join(path.posix.dirname(name), module + '.ts'), mocks, cache) : require(module);
-    } };
-    vm.runInNewContext(ts.transpileModule(fs.readFileSync(name, 'utf8'), {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
-    }).outputText, context, { filename: name });
-    return exports;
-}
+const { load, previewHtml } = require('./test-utils.cjs');
 const plain = value => JSON.parse(JSON.stringify(value));
 const parsed = load('src/web/board3dData.ts');
 const board = `(kicad_pcb (version 20240108) (generator pcbnew)
@@ -40,12 +25,27 @@ const board = `(kicad_pcb (version 20240108) (generator pcbnew)
 const wrl = '#VRML V2.0 utf8\nTransform { translation 0 0 0.5 children [ Background { skyColor [1 1 1] groundAngle [1.57] groundColor [0.2 0.2 0.2 0.1 0.1 0.1] } Shape { appearance Appearance { material Material { diffuseColor 0.2 0.3 0.8 } } geometry Box { size 2 1 1 } } ] }';
 const stepBytes = fs.readFileSync('node_modules/occt-import-js/test/testfiles/simple-basic-cube/cube.stp');
 function html(source = board, suffix = 'kicad_pcb') {
-    const vscode = { Uri: { joinPath: Utils.joinPath } };
-    return load('src/web/previewContent.ts', { vscode }).getWebviewContent(
-        URI.parse('https://kilens.test'), { uri: URI.parse(`file:///project/board.${suffix}`), getText: () => source },
-        { webview: { asWebviewUri: uri => uri } });
+    return previewHtml(source, 'board.' + suffix);
 }
 async function unitTests() {
+    const { textStrokes } = load('src/web/strokeText.ts');
+    for (const { options, strokes } of require('./fixtures/stroke-text.json').cases) {
+        const actual = textStrokes(options);
+        assert.equal(actual.length, strokes.length, `Stroke count: ${options.text}`);
+        strokes.forEach((stroke, i) => {
+            assert.equal(actual[i].length, stroke.length);
+            stroke.forEach((point, j) => point.forEach((value, axis) =>
+                assert.ok(Math.abs(actual[i][j][axis] - value) < 1e-5,
+                    `Font layout changed for ${JSON.stringify(options)}: ${actual[i][j][axis]} vs ${value}`)));
+        });
+    }
+    const fallback = { ...require('./fixtures/stroke-text.json').cases[0].options, text: '?' };
+    assert.deepEqual(plain(textStrokes({ ...fallback, text: '\u{1f600}' })), plain(textStrokes(fallback)), 'Unknown Unicode uses the replacement glyph');
+    const trickySource = board.replace('(paper "A4")', '(paper "A4") (property "note" "</script><script>window.injected = true</script> & < > 中文")');
+    const markup = html(trickySource);
+    assert.ok(!markup.includes('<script>window.injected'), 'Source cannot terminate the inline script');
+    const serialized = markup.match(/source: (".*"),\r?\n/)[1];
+    assert.equal(JSON.parse(serialized), trickySource, '3D receives the exact original document');
     const { createNativeDiscovery } = load('src/node/modelDiscovery.ts');
     const nativeFiles = new Map([
         ['/config/9.0/kicad_common.json', JSON.stringify({ environment: { vars: { CUSTOM: '/models/old', KICAD9_3DMODEL_DIR: '/models/k9' } } })],
@@ -64,6 +64,9 @@ async function unitTests() {
     assert.ok(found.roots.includes('/usr/share/kicad/3dmodels'));
     assert.equal((await discover('${KICAD9_3DMODEL_DIR}/x.step')).variables.CUSTOM, '/models/old', 'Matching config version wins');
     const winDiscovery = createNativeDiscovery({ ...nativeHost, platform: 'win32' });
+    const quickDiscovery = await winDiscovery('${KICAD10_3DMODEL_DIR}/x.step', false);
+    assert.equal(quickDiscovery.variables.KICAD10_3DMODEL_DIR, '/env/k10');
+    assert.equal(registryCalls, 0, 'Known environment/config paths do not wait for the installer registry');
     assert.ok((await winDiscovery('${KICAD10_3DMODEL_DIR}/x.step')).roots.some(p => p.replace(/\\/g, '/') === 'Q:/Engineering/KiCad/10.0/share/kicad/3dmodels'));
     await winDiscovery('${KICAD10_3DMODEL_DIR}/another.step');
     assert.equal(registryCalls, 1, 'Registry results are cached');
@@ -71,6 +74,8 @@ async function unitTests() {
     assert.ok(mac.roots.includes('/home/test/Library/Application Support/kicad/3dmodels'));
     const empty = await createNativeDiscovery({ ...nativeHost, env: {}, readText: async () => '{invalid', directories: async () => [] })('model.step');
     assert.deepEqual(plain(empty.variables), {}, 'Missing or malformed config leaves fallback discovery usable');
+    const nullConfig = await createNativeDiscovery({ ...nativeHost, env: {}, readText: async () => 'null', directories: async () => [] })('model.step');
+    assert.deepEqual(plain(nullConfig.variables), {}, 'Non-object configuration does not block model discovery');
     const data = parsed.parseBoard3d(board);
     const silkData = parsed.parseBoard3d(`(kicad_pcb
       (gr_text "BOARD" (at 1 2 30) (layer "F.SilkS") (effects (font (size 2 3) (thickness 0.2)) (justify left top)))
@@ -108,7 +113,31 @@ async function unitTests() {
     const arc = parsed.arcPoints([1, 0], [0, 1], [-1, 0]);
     assert.ok(Math.abs(arc[Math.floor(arc.length / 2)][1] - 1) < 0.005);
     const THREE = require('three');
-    const { placeModel, strokeGeometry, updateCameraDepth, copperZoneGeometry, loadWrlModel, usableCameraState } = load('src/web/preview3d.ts');
+    const { placeModel, createModelPlaceholder, strokeGeometry, updateCameraDepth, copperZoneGeometry, loadWrlModel, usableCameraState } = load('src/web/preview3d.ts');
+    const estimates = parsed.parseBoard3d(`(kicad_pcb
+      (footprint "Capacitor_SMD:C_0603_1608Metric" (layer "F.Cu") (property "Reference" "C1") (model "c.step"))
+      (footprint "Resistor_SMD:R_0603_1608Metric" (layer "F.Cu") (property "Reference" "R1") (model "r.step"))
+      (footprint "Package_QFN:QFN_4x2x1mm" (layer "B.Cu") (at 10 20 90)
+        (fp_rect (start 0 2) (end 4 4) (layer "B.Fab"))
+        (fp_rect (start -10 -10) (end 10 10) (layer "B.CrtYd"))
+        (model "u.step" (scale (xyz 0.01 0.01 0.01))) (model "lid.step"))
+      (footprint "Connector" (layer "F.Cu") (fp_rect (start -3 -2) (end 3 2) (layer "F.CrtYd")) (model "j.step"))
+      (footprint "Unknown" (layer "F.Cu") (at 0 0 90)
+        (pad "1" smd rect (at -2 0 90) (size 2 1)) (pad "2" smd rect (at 2 0 90) (size 2 1)) (model "x.step")))`).models;
+    assert.deepEqual(plain(estimates[0].placeholder.size.slice(0, 2)), [1.6, 0.8], 'Metric package code supplies physical body dimensions');
+    assert.notEqual(estimates[0].placeholder.color, estimates[1].placeholder.color, 'Capacitors and resistors have distinct estimated colors');
+    assert.ok(estimates[0].placeholder.size[2] > estimates[1].placeholder.size[2]);
+    assert.deepEqual(plain(estimates[2].placeholder.size), [4, 2, 1], 'Fab body overrides clearance and model unit scaling');
+    assert.equal(estimates[2].placeholder.footprint, estimates[3].placeholder.footprint, 'Multiple models belong to one estimated component');
+    const placeholder = createModelPlaceholder(estimates[2], 1.6);
+    const placeholderBounds = new THREE.Box3().setFromObject(placeholder);
+    assert.ok(placeholder.position.distanceTo(new THREE.Vector3(13, -18, -1.33)) < 1e-8, 'Back-side rotated body stays centered on the footprint');
+    assert.ok(placeholderBounds.max.z < -0.8, 'Back-side placeholder is outside the board');
+    assert.ok(Math.abs(placeholderBounds.getSize(new THREE.Vector3()).x - 2) < 1e-8);
+    assert.deepEqual(plain(estimates[4].placeholder.size.slice(0, 2)), [5.1, 3.4], 'Courtyard fallback discounts clearance');
+    assert.deepEqual(plain(estimates[5].placeholder.size.slice(0, 2)), [5.1, 0.85], 'Pad fallback handles absolute pad angles');
+    placeholder.geometry.dispose(); placeholder.material.dispose();
+    assert.equal(parsed.modelReferences(board)[0].placeholder, undefined, 'Host path lookup does not estimate bodies');
     const component = loadWrlModel(wrl);
     const componentBox = new THREE.Box3().setFromObject(component);
     assert.ok(componentBox.getSize(new THREE.Vector3()).distanceTo(new THREE.Vector3(5.08, 2.54, 2.54)) < 1e-6,
@@ -185,11 +214,14 @@ async function unitTests() {
                 readFile: async uri => { reads.push(uri.path); return files.get(uri.path); }
             } } };
     const resolver = load('src/web/modelResolver.ts', { vscode });
+    let eagerDiscovery = 0;
+    resolver.setNativeModelDiscovery(async () => { eagerDiscovery++; return { variables: {}, roots: [] }; });
     const doc = model => ({ uri: URI.file('/project/board.kicad_pcb'), getText: () => `(kicad_pcb (footprint "x" (model "${model}")))` });
     assert.equal((await resolver.readModel(doc('model.wrl'), 0)).format, 'wrl');
     assert.equal((await resolver.readModel(doc('${KICAD9_3DMODEL_DIR}/Package.3dshapes/x.step'), 0)).format, 'step');
     assert.equal((await resolver.readModel(doc('${CUSTOM}/a.step'), 0)).format, 'step');
     assert.equal((await resolver.readModel(doc('${KIPRJMOD}/model.wrl'), 0)).format, 'wrl');
+    assert.equal(eagerDiscovery, 0, 'Project, explicit variable and configured library hits skip automatic discovery');
     await assert.rejects(resolver.readModel(doc('../secret/model.step'), 0), /outside/);
     await assert.rejects(resolver.readModel(doc('https://example.com/a.step'), 0), /outside/);
     await assert.rejects(resolver.readModel(doc('${UNKNOWN}/x.step'), 0), /Unresolved/);
@@ -203,7 +235,26 @@ async function unitTests() {
     assert.equal((await resolver.readModel(doc('${KICAD10_3DMODEL_DIR}/Package.3dshapes/x.step'), 0)).format, 'step', 'Chosen model folder overrides stale automatic paths');
     vscode.workspace.isTrusted = false;
     await assert.rejects(resolver.readModel(doc('${KICAD10_3DMODEL_DIR}/Package.3dshapes/x.step'), 0), /outside/);
-    assert.equal(nativeCalls, 1, 'Untrusted documents do not read native settings');
+    assert.equal(nativeCalls, 0, 'Configured hits and untrusted documents do not read native settings');
+    vscode.workspace.isTrusted = true;
+    const stages = [];
+    resolver.setNativeModelDiscovery(async (_reference, installations) => {
+        stages.push(installations);
+        return { variables: { NATIVE: '/custom' }, roots: [] };
+    });
+    assert.equal((await resolver.readModel(doc('${NATIVE}/a.step'), 0)).format, 'step');
+    assert.deepEqual(stages, [false], 'A native path hit never queries installation locations');
+    config.modelPathVariables.KICAD10_3DMODEL_DIR = '${NATIVE}';
+    files.set('/custom/Package.3dshapes/x.step', Buffer.from('explicit native model'));
+    const explicit = await resolver.readModel(doc('${KICAD10_3DMODEL_DIR}/Package.3dshapes/x.step'), 0);
+    assert.equal(Buffer.from(explicit.bytes).toString(), 'explicit native model', 'Nested explicit variables keep priority over configured libraries');
+    delete config.modelPathVariables.KICAD10_3DMODEL_DIR;
+    const statCalls = [];
+    const originalStat = vscode.workspace.fs.stat;
+    vscode.workspace.fs.stat = async uri => { statCalls.push(uri.toString()); return originalStat(uri); };
+    await assert.rejects(resolver.readModel(doc('${KICAD10_3DMODEL_DIR}/missing.step'), 0), /not found/);
+    assert.equal(new Set(statCalls).size, statCalls.length, 'Each permitted candidate is probed only once across discovery stages');
+    vscode.workspace.fs.stat = originalStat;
     resolver.setNativeModelDiscovery(async () => ({ variables: {}, roots: [] }));
     // Detect a non-default drive and prefer the version referenced by the board.
     vscode.FileType.Directory = 2;
@@ -299,16 +350,31 @@ async function browserTests() {
                 return route.fulfill({ path: process.env.KILENS_TEST_3D_BUNDLE, contentType: 'text/javascript' });
             if (url.pathname.startsWith('/media/')) return route.fulfill({ path: '.' + url.pathname,
                 contentType: url.pathname.endsWith('.css') ? 'text/css' : url.pathname.endsWith('.wasm') ? 'application/wasm' : 'text/javascript' });
-            return route.fulfill({ body: html(source), contentType: 'text/html; charset=utf-8' });
+            // Exercise the complete 3D suite with no KiCanvas script or custom elements.
+            // The source and 2D activation callback must also work without a 2D viewer.
+            const standalone = html(source)
+                .replace(/<script type="module"[^>]+kicanvas\.js[^>]*><\/script>/, '')
+                .replace(/<kicanvas-embed\b[^>]*>[\s\S]*?<\/kicanvas-embed>/, '');
+            return route.fulfill({ body: standalone, contentType: 'text/html; charset=utf-8' });
         });
         await page.goto('https://kilens.test/');
+        assert.equal(await page.evaluate(() => !!document.querySelector('kicanvas-embed, kicanvas-source')), false);
         assert.ok(!requests.some(url => url.includes('/3d/')), '3D engine must be lazy-loaded');
         await page.evaluate(() => { window.holdModelLoads = true; });
         await page.getByRole('button', { name: '3D Preview', exact: true }).click();
-        await page.waitForFunction(() => window.modelRequests.length > 0);
-        assert.equal(await page.locator('.three-viewport canvas').isVisible(), false,
-            'Do not display a temporary board-only camera while models are loading');
-        assert.equal(await page.evaluate(() => savedPreviewState.camera3d), undefined);
+        await page.waitForFunction(() => window.modelRequests.length === 2);
+        assert.deepEqual(await page.evaluate(() => modelRequests), [0, 1],
+            'Two distinct model reads overlap before either returns, with a bounded prefetch window');
+        assert.equal(await page.locator('.three-viewport canvas').isVisible(), true,
+            'Board and estimated components are visible before model reads complete');
+        assert.ok((await page.locator('.three-message').textContent()).includes('4 estimated component(s)'));
+        fs.mkdirSync('dist/test-output', { recursive: true });
+        await page.screenshot({ path: 'dist/test-output/preview3d-loading.png' });
+        const loadingCamera = await page.evaluate(() => savedPreviewState.camera3d);
+        assert.ok(loadingCamera);
+        await page.mouse.move(550, 330); await page.mouse.down(); await page.mouse.move(590, 360, { steps: 4 }); await page.mouse.up();
+        const movedWhileLoading = await page.evaluate(() => savedPreviewState.camera3d);
+        assert.notDeepEqual(movedWhileLoading.position, loadingCamera.position, 'Orbit is usable during loading');
         await page.evaluate(() => { window.holdModelLoads = false; });
         await page.waitForFunction(() => document.querySelector('.three-status').textContent.includes('Models: 3/4'), null, { timeout: 45000 }).catch(async error => {
             console.log('3D diagnostics:', await page.locator('.three-message').textContent(), errors);
@@ -317,6 +383,9 @@ async function browserTests() {
         assert.ok((await page.locator('.three-details').textContent()).includes('missing.step'));
         assert.equal(await page.locator('.three-viewport canvas').isVisible(), true);
         const initialCamera = await page.evaluate(() => savedPreviewState.camera3d);
+        assert.deepEqual(initialCamera, movedWhileLoading, 'Model replacement preserves the user camera');
+        assert.ok((await page.locator('.three-message').textContent()).includes('1 estimated component(s)'),
+            'Only the unavailable model retains its estimated body');
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         assert.deepEqual(await page.evaluate(() => savedPreviewState.camera3d), initialCamera,
             'The first visible camera remains stable after loading');
@@ -343,6 +412,22 @@ async function browserTests() {
             await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
             assert.equal(await page.locator('.three-render-status').textContent(), '', 'Enhanced renderer stays available');
         };
+        const backgroundPixels = async () => {
+            const screenshot = await page.locator('.three-viewport canvas').screenshot();
+            return page.evaluate(async base64 => {
+                const image = new Image(); image.src = 'data:image/png;base64,' + base64; await image.decode();
+                const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+                const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+                return [2, image.width - 3].map(x => Array.from(context.getImageData(x, Math.floor(image.height / 2), 1, 1).data));
+            }, screenshot.toString('base64'));
+        };
+        const standardBackground = await backgroundPixels();
+        assert.deepEqual(standardBackground, [[16, 29, 35, 255], [16, 29, 35, 255]], 'Standard preview uses the shared background');
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).check();
+        await waitForEnhanced();
+        assert.deepEqual(await backgroundPixels(), standardBackground, 'Enhanced tone mapping leaves the background unchanged');
+        await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).uncheck();
+        assert.deepEqual(await backgroundPixels(), standardBackground, 'Returning to standard rendering preserves the background');
         await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).check();
         await waitForEnhanced();
         assert.equal(await page.evaluate(() => savedPreviewState.enhanced3d), true);
@@ -554,8 +639,8 @@ async function browserTests() {
         const glyphCheck = await page.evaluate(() => {
             const base = { text: 'R42', position: [0, 0], size: [2, 2], width: 0.3, horizontal: 'center', vertical: 'center',
                 angle: 0, mirror: false, italic: false, bold: false, lineSpacing: 1 };
-            return { plain: KiLensStrokeText(base), mirror: KiLensStrokeText({ ...base, mirror: true }), rotate: KiLensStrokeText({ ...base, angle: 90 }),
-                markup: KiLensStrokeText({ ...base, text: '~{EN} V_{IN}' }) };
+            return { plain: KiLens3D.textStrokes(base), mirror: KiLens3D.textStrokes({ ...base, mirror: true }), rotate: KiLens3D.textStrokes({ ...base, angle: 90 }),
+                markup: KiLens3D.textStrokes({ ...base, text: '~{EN} V_{IN}' }) };
         });
         assert.ok(glyphCheck.plain.length > 4 && glyphCheck.markup.length > 4);
         glyphCheck.plain.forEach((stroke, i) => stroke.forEach(([x, y], j) => {
@@ -595,10 +680,13 @@ async function browserTests() {
         await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).check();
         await waitForEnhanced();
         assert.equal(await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).isChecked(), true, 'LDR rendering works without float targets');
+        assert.deepEqual(await backgroundPixels(), standardBackground, 'LDR fallback uses the same background');
         await page.getByRole('button', { name: 'Bottom', exact: true }).click();
         assert.ok(await page.evaluate(() => savedPreviewState.camera3d.position[2] < savedPreviewState.camera3d.target[2]));
         assert.deepEqual(errors, []);
-        console.log('3D browser test passed: STEP/WRL, interaction, artwork, enhanced rendering, export, toggling and LDR fallback');
+        assert.ok(!requests.some(url => /kicanvas/i.test(url)), '3D never requests KiCanvas');
+        assert.equal(await page.evaluate(() => typeof window.KiLensStrokeText), 'undefined', 'No legacy font global');
+        console.log('Standalone 3D browser test passed without KiCanvas: STEP/WRL, interaction, artwork, enhanced rendering, export, toggling and LDR fallback');
     } finally { await browser.close(); }
 }
 (async () => { await unitTests(); if (!process.argv.includes('--unit')) await browserTests(); })().catch(error => { console.error(error); process.exitCode = 1; });

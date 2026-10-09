@@ -1,8 +1,8 @@
 {
 	"name": "kilens",
 	"displayName": "KiLens",
-	"description": "KiCad schematic and PCB files Preview",
-	"version": "1.1.0",
+	"description": "Preview KiCad schematics and PCBs in 2D and 3D.",
+	"version": "1.1.5",
 	"publisher": "fleaxiao",
 	"license": "MIT",
 	"icon": "icon.png",
@@ -185,11 +185,15 @@
 	"files": [
 		"dist/node/extension.js",
 		"dist/web/extension.js",
-		"media",
+		"media/*",
+		"media/3d/*.{js,wasm,txt}",
+		"media/3d/LICENSE.*",
 		"icon.png",
 		"LICENSE",
 		"LICENSE.KICAD-ICONS",
-		"NOTICE"
+		"NOTICE",
+		"docs/USAGE.md",
+		"docs/DEVELOPMENT.md"
 	],
 	"devDependencies": {
 		"@types/mocha": "^10.0.10",

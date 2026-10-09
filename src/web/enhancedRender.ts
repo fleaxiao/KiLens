@@ -83,11 +83,14 @@ export class EnhancedRender {
         this.composite = new FullScreenQuad(new THREE.ShaderMaterial({
             vertexShader, depthTest: false, depthWrite: false, premultipliedAlpha: true,
             uniforms: { ...depthUniforms(), sceneColor: { value: this.color.texture },
-                occlusion: { value: this.ao.texture }, aoPixel: { value: new THREE.Vector2() } },
+                occlusion: { value: this.ao.texture }, aoPixel: { value: new THREE.Vector2() },
+                backgroundColor: { value: new THREE.Color() }, backgroundAlpha: { value: 1 } },
             fragmentShader: /* glsl */`
                 varying vec2 vUv;
                 uniform sampler2D sceneColor, occlusion;
                 uniform vec2 aoPixel;
+                uniform vec3 backgroundColor;
+                uniform float backgroundAlpha;
                 ${depthFunctions}
                 void main() {
                     float center = viewDistance(vUv), sum = 0.0, weights = 0.0;
@@ -105,6 +108,13 @@ export class EnhancedRender {
                     #include <tonemapping_fragment>
                     #include <colorspace_fragment>
                     #include <premultiplied_alpha_fragment>
+                    // Match the normal renderer's clear color: only scene objects
+                    // receive tone mapping. Composite the background after it,
+                    // including partial MSAA coverage at silhouette edges.
+                    vec3 background = linearToOutputTexel(vec4(backgroundColor, 1.0)).rgb;
+                    float backgroundCoverage = backgroundAlpha * (1.0 - sampleColor.a);
+                    gl_FragColor.rgb += background * backgroundCoverage;
+                    gl_FragColor.a += backgroundCoverage;
                 }
             `
         }));
@@ -146,8 +156,8 @@ export class EnhancedRender {
         this.enabled = enabled;
         this.renderer.shadowMap.enabled = enabled;
         this.scene.environment = enabled ? this.environment?.texture ?? null : null;
-        this.scene.environmentIntensity = 0.35;
-        this.ambientLights.forEach(({ light, intensity }) => { light.intensity = enabled ? intensity * 0.5 : intensity; });
+        this.scene.environmentIntensity = 0.4;
+        this.ambientLights.forEach(({ light, intensity }) => { light.intensity = enabled ? intensity * 0.55 : intensity; });
         this.lights.forEach(light => { light.castShadow = enabled; });
         if (!enabled) this.originals.forEach((material, mesh) => { mesh.material = material; });
     }
@@ -168,6 +178,11 @@ export class EnhancedRender {
         if (this.shadowsDirty) {
             this.assembly.traverse(object => {
                 if (!(object instanceof THREE.Mesh)) return;
+                // Temporary estimated bodies own their materials and are removed
+                // as models arrive. Do not retain them in enhancement caches.
+                if (object.userData.kilensPlaceholder) {
+                    object.castShadow = true; object.receiveShadow = true; return;
+                }
                 const original: THREE.Material | THREE.Material[] = this.originals.get(object) ?? object.material;
                 this.originals.set(object, original);
                 const list = Array.isArray(original) ? original : [original];
@@ -198,9 +213,14 @@ export class EnhancedRender {
         ao.uniforms.cameraFar.value = composite.uniforms.cameraFar.value = camera.far;
         composite.uniforms.aoPixel.value.set(1 / this.ao.width, 1 / this.ao.height);
         const target = renderer.getRenderTarget(), mapping = renderer.toneMapping, exposure = renderer.toneMappingExposure;
+        const clearColor = renderer.getClearColor(new THREE.Color()), clearAlpha = renderer.getClearAlpha();
+        composite.uniforms.backgroundColor.value.copy(clearColor);
+        composite.uniforms.backgroundAlpha.value = clearAlpha;
         try {
-            renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.08;
+            renderer.setClearColor(0x000000, 0);
             renderer.setRenderTarget(this.color); renderer.render(scene, camera);
+            renderer.setClearColor(clearColor, clearAlpha);
             renderer.setRenderTarget(this.ao);
             if (ambientOcclusion) this.occlusion.render(renderer);
             else {
@@ -209,6 +229,7 @@ export class EnhancedRender {
             }
             renderer.setRenderTarget(target); this.composite.render(renderer);
         } finally {
+            renderer.setClearColor(clearColor, clearAlpha);
             renderer.setRenderTarget(target); renderer.toneMapping = mapping; renderer.toneMappingExposure = exposure;
         }
     }

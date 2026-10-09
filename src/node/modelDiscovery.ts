@@ -55,7 +55,7 @@ export function createNativeDiscovery(system: DiscoveryHost = host) {
         }
         return result;
     };
-    return async (reference: string) => {
+    return async (reference: string, includeInstallations = true) => {
         const requested = reference.match(/\$\{KICAD(\d+)_3DMODEL_DIR\}/)?.[1] ?? '';
         let cached = cache.get(requested);
         if (!cached || cached.expires < Date.now()) {
@@ -70,13 +70,16 @@ export function createNativeDiscovery(system: DiscoveryHost = host) {
                 versions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
                 if (requested && versions.includes(`${requested}.0`)) versions = [...versions.filter(v => v !== `${requested}.0`), `${requested}.0`];
                 const variables: Record<string, string> = {};
-                for (const folder of [base, ...versions.map(v => paths.join(base, v))]) {
+                const configs = await Promise.all([base, ...versions.map(v => paths.join(base, v))].map(async folder => {
                     try {
-                        const config = JSON.parse(await system.readText(paths.join(folder, 'kicad_common.json')));
-                        for (const [key, value] of Object.entries(config.environment?.vars ?? {})) {
-                            if (typeof value === 'string' && value) variables[key] = value;
-                        }
-                    } catch { /* Missing or invalid settings do not block other discovery methods. */ }
+                        return JSON.parse(await system.readText(paths.join(folder, 'kicad_common.json')));
+                    } catch { return {}; }
+                }));
+                // Read in parallel, then apply the original version precedence.
+                for (const config of configs) {
+                    for (const [key, value] of Object.entries(config?.environment?.vars ?? {})) {
+                        if (typeof value === 'string' && value) variables[key] = value;
+                    }
                 }
                 // KiCad gives system environment variables precedence over Configure Paths.
                 for (const [key, value] of Object.entries(system.env)) {
@@ -86,13 +89,10 @@ export function createNativeDiscovery(system: DiscoveryHost = host) {
                 for (const key of Object.keys(variables)) variables[key] = expand(variables[key], combined);
                 const roots = Object.entries(variables).filter(([key]) => modelVariable.test(key))
                     .sort(([a], [b]) => b.localeCompare(a, undefined, { numeric: true })).map(([, value]) => value);
-                if (system.platform === 'win32') {
-                    registry ??= system.registryInstallations().catch(() => []);
-                    roots.push(...(await registry).map(folder => paths.join(expand(folder, system.env), 'share/kicad/3dmodels')));
-                } else if (system.platform === 'darwin') {
+                if (system.platform === 'darwin') {
                     roots.push(paths.join(system.home, 'Library/Application Support/kicad/3dmodels'),
                         '/Library/Application Support/kicad/3dmodels', '/Applications/KiCad/KiCad.app/Contents/SharedSupport/3dmodels');
-                } else {
+                } else if (system.platform !== 'win32') {
                     roots.push('/usr/share/kicad/3dmodels', '/usr/local/share/kicad/3dmodels', '/app/share/kicad/3dmodels');
                     const flatpak = 'org.kicad.KiCad';
                     for (const baseDir of ['/var/lib/flatpak/app', paths.join(system.home, '.local/share/flatpak/app')]) {
@@ -111,6 +111,11 @@ export function createNativeDiscovery(system: DiscoveryHost = host) {
         for (const match of reference.matchAll(/\$\{([^}]+)\}/g)) {
             if (!variables[match[1]] && system.env[match[1]]) variables[match[1]] = expand(system.env[match[1]]!, system.env);
         }
-        return { roots: found.roots, variables };
+        const roots = [...found.roots];
+        if (system.platform === 'win32' && includeInstallations) {
+            registry ??= system.registryInstallations().catch(() => []);
+            roots.push(...(await registry).map(folder => paths.join(expand(folder, system.env), 'share/kicad/3dmodels')));
+        }
+        return { roots: [...new Set(roots.filter(root => root && !root.includes('${')))], variables };
     };
 }

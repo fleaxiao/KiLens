@@ -1,25 +1,15 @@
 const fs = require('node:fs');
-const vm = require('node:vm');
-const path = require('node:path');
 const assert = require('node:assert/strict');
-const ts = require('typescript');
 const { URI, Utils } = require('vscode-uri');
 const { chromium } = require('playwright');
 
-function load(filename, vscode) {
-    const context = { exports: {}, atob, Uint8Array, require: name => name === 'vscode' ? vscode
-        : load(path.join(path.dirname(filename), name + '.ts'), vscode) };
-    vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
-    }).outputText, context);
-    return context.exports;
-}
+const { load, previewHtml } = require('./test-utils.cjs');
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
 async function hostTests() {
     let dialog, destination, writes = [], failure;
     const vscode = { Uri: { joinPath: Utils.joinPath }, window: { showSaveDialog: async options => { dialog = options; return destination; } },
         workspace: { fs: { writeFile: async (uri, bytes) => { if (failure) throw failure; writes.push({ uri, bytes }); } } } };
-    const { exportPreviewImage } = load('src/web/exportImage.ts', vscode);
+    const { exportPreviewImage } = load('src/web/exportImage.ts', { vscode });
     const source = URI.parse('file:///project/board.kicad_pcb');
     assert.equal((await exportPreviewImage(source, { mode: '2d', dataUrl: png })).cancelled, true);
     assert.equal(writes.length, 0, 'Cancelling does not write a file');
@@ -58,22 +48,18 @@ async function browserTests() {
                 if (message.type === 'exportPreviewImage') window.exports.push(message);
             } });
         });
-        const pcb = fs.readFileSync('scripts/test-ratsnest-browser.cjs', 'utf8').match(/const board = `([\s\S]*?)`;/)[1];
+        const pcb = fs.readFileSync('scripts/fixtures/preview.kicad_pcb', 'utf8');
         const schematic = `(kicad_sch (version 20250114) (generator "eeschema")
             (uuid "579a8384-f4c5-4531-89a0-fcfc5cc04b41") (paper "A4") (lib_symbols)
             (wire (pts (xy 50 50) (xy 100 50)) (stroke (width 0) (type default)) (uuid "30a83884-f4c5-4531-89a0-fcfc5cc04b41"))
             (text "PNG export" (at 80 55 0) (effects (font (size 1.27 1.27))) (uuid "41a83884-f4c5-4531-89a0-fcfc5cc04b41")))`;
-        const vscode = { Uri: { joinPath: Utils.joinPath } };
-        const { getWebviewContent } = load('src/web/previewContent.ts', vscode);
         await page.route('**/*', route => {
             const url = new URL(route.request().url());
             if (url.hostname !== 'kilens.test') return route.abort();
             if (url.pathname.startsWith('/media/')) return route.fulfill({ path: '.' + url.pathname,
                 contentType: url.pathname.endsWith('.css') ? 'text/css' : url.pathname.endsWith('.wasm') ? 'application/wasm' : 'text/javascript' });
             const sch = url.pathname.endsWith('.kicad_sch');
-            return route.fulfill({ contentType: 'text/html; charset=utf-8', body: getWebviewContent(URI.parse('https://kilens.test'),
-                { uri: URI.parse('file:///project' + url.pathname), getText: () => sch ? schematic : pcb },
-                { webview: { asWebviewUri: uri => uri } }) });
+            return route.fulfill({ contentType: 'text/html; charset=utf-8', body: previewHtml(sch ? schematic : pcb, url.pathname.slice(1)) });
         });
         fs.mkdirSync('dist/test-output', { recursive: true });
         async function capture(label, mode = '2d') {
@@ -138,6 +124,7 @@ async function browserTests() {
         await page.waitForFunction(() => !document.querySelector('.export-image-button').disabled);
         assert.match(await page.locator('.export-image-status').textContent(), /Read-only destination/);
         await page.getByRole('button', { name: '3D Preview', exact: true }).click();
+        assert.equal(await page.getByRole('button', { name: 'Layers', exact: true }).isVisible(), false, 'Layer controls are only shown in 2D');
         await page.waitForFunction(() => document.querySelector('.three-status').textContent.includes('Models: 0/0'));
         await capture('3d', '3d');
         await page.getByRole('checkbox', { name: 'Enhanced rendering', exact: true }).check();
@@ -145,7 +132,13 @@ async function browserTests() {
         await page.evaluate(() => window.postMessage({ type: 'exportPreviewImageResult', requestId: window.exports.at(-1).requestId, error: 'Old response' }, '*'));
         assert.equal(await page.locator('.export-image-status').isVisible(), false, 'Ignores stale replies');
         await page.goto('https://kilens.test/design.kicad_sch');
-        await page.waitForFunction(() => getViewer()?.layers && getViewer()?.document);
+        await page.waitForFunction(() => getViewer()?.layers && !document.querySelector('.layers-toolbar-button').disabled);
+        assert.equal(await page.evaluate(() => getViewer().layers.by_name(':DrawingSheet').visible), false, 'Schematic Page starts hidden');
+        await page.getByRole('button', { name: 'Layers', exact: true }).click();
+        await page.getByRole('checkbox', { name: 'Page', exact: true }).check();
+        assert.equal(await page.evaluate(() => getViewer().layers.by_name(':DrawingSheet').visible), true);
+        await page.getByRole('checkbox', { name: 'Page', exact: true }).uncheck();
+        await page.keyboard.press('Escape');
         await page.evaluate(() => new Promise(requestAnimationFrame));
         await capture('schematic');
         assert.equal(errors.length, 0, errors.join('\n'));
